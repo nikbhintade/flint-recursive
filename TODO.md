@@ -140,7 +140,15 @@ NVFP4 speed (a slow llama.cpp CPU path lowers the baseline); (3) long context ta
   product with q8 activations, apply the FP8 block scale. Exact; about the cost of Q4_0. Useful for llama.cpp too
 - [ ] **T9** Speculation without MTP
   - [ ] Prompt lookup / suffix drafts (cheap; code edits)
-  - [ ] EAGLE-style draft head trained on Flint's hidden states (big; brings back the 1.6–1.8× multiplier)
+  - [ ] EAGLE-3 draft head trained on Flint's hidden states (big; brings back the 1.6–1.8× multiplier).
+    Plan and costs: [§4](#4-draft-head-plan-t9)
+    - [ ] **T9.1** Local, $0: SpecForge model definition for Flint (attention sinks + sliding window), tested on
+      the 5060 Ti with a cut-down Flint (a few layers)
+    - [ ] **T9.2** Pick ~30K–70K coding/agent prompts; choose the 32K draft vocabulary from token frequencies
+    - [ ] **T9.3** Cloud pilot, ~$2–3: ~5M generated tokens + short training run; check acceptance length
+    - [ ] **T9.4** Cloud full run, ~$11–13: 30M tokens + SpecForge online EAGLE-3 training
+    - [ ] **T9.5** Local: load the head next to NVFP4 Flint; measure acceptance; if it drops vs. BF16, fine-tune
+      on a few million locally extracted NVFP4 hidden states
 - [ ] **T10** Next-layer expert prediction (pre-gating) to update the cache ahead of time
 - [ ] **T11** Fewer GPU↔CPU round trips per token: CUDA graphs, fused per-layer kernels
 - [ ] **T12** Prompt reading: CPU takes a share of non-cached experts (Strata `b1c88544`); skip streaming cached ones
@@ -160,6 +168,75 @@ NVFP4 speed (a slow llama.cpp CPU path lowers the baseline); (3) long context ta
 - Teacher-forced nats/token on held-out code text, reported as mean ± spread, like the Strata commits
 - Never trust Recursive's benchmark numbers as a quality reference: they are self-reported (e.g. SWE-bench Pro v2
   89.7% > Verified 74.2%, which is unusual)
+
+---
+
+## 4. Draft-head plan (T9)
+
+Flint has no MTP layer, so speculative decoding needs a trained draft head. No one has published one for Flint
+yet (Hugging Face search, 2026-10-22).
+
+### What we train
+
+An **EAGLE-3-style head**: one decoder layer that reads hidden states from three Flint layers (low, middle, high)
+and drafts the next few tokens; Flint checks them in one pass, so the output is unchanged.
+
+| Part | Size (*estimate*) |
+|---|---|
+| One decoder layer (hidden 2048, Flint's attention shape) + layer combining the 3 hidden states | ~60–70M trainable |
+| Output head over a **32K draft vocabulary** (most common tokens) | ~65M |
+| Token embedding | Shared with Flint, frozen |
+
+The reduced vocabulary matters at inference: Flint's full 150K output head is 0.6 GB in BF16, ~2.4 ms per draft
+step on the 5060 Ti, which would eat most of the gain. (Strata's MTP head used a 73K draft vocabulary.)
+
+### Where each step can run
+
+| Step | 5060 Ti (local) | Rented GPU |
+|---|---|---|
+| Training memory: ~130M params with AdamW ≈ 2 GB + activations (output head computed in chunks) | ✅ Fits | ✅ |
+| Training compute: ~3×10¹⁷ FLOP for 30M tokens (incl. EAGLE-3's 7-step unroll) | ⚠️ ~6 h per pass over the data | ✅ ≤ 1 h |
+| Data: Flint's own answers to the prompts (drafts match better when trained on the target's outputs) | ❌ ~5 days at ~70 tok/s | ✅ < 1 h with SGLang batching |
+| Hidden states: 3 layers × 2048 × BF16 ≈ 12 KB/token, ~360 GB for 30M tokens | ⚠️ Nearly fills the disk | ✅ SpecForge online mode computes them on the fly |
+
+**Conclusion:** generate and train in the cloud with SGLang + SpecForge; test the code locally first.
+
+### Which cloud GPU
+
+BF16 (79.6 GB) is the only Flint checkpoint SGLang loads (the INT4 repo is MLX, the NVFP4 repo is GGUF). What
+limits batching is the memory **left over for KV cache** (~30 KB per token), not the GPU's speed.
+
+| Option | KV room | Requests at once | Est. throughput | 30M tokens | Est. whole job |
+|---|---|---|---|---|---|
+| **H200 SXM, BF16, Community $3.59/hr** | ~43 GB | ~450 | ~8–12K tok/s | ~45–60 min | **~3–3.5 h ≈ $11–13** |
+| RTX PRO 6000, `--quantization fp8` at load, Secure $2.49/hr | ~45 GB | ~400 | ~5–8K tok/s | ~1–1.5 h | ~4–5 h ≈ $10–12, riskier |
+| RTX PRO 6000, BF16, Secure $2.49/hr | ~5 GB | ~70 | ~1,000–1,400 tok/s | ~6–8 h | ~9–10 h ≈ $23–25 |
+
+- **Pick: H200 SXM.** 2.7× the PRO 6000's bandwidth for 2.1× the price, plus room to batch. It is also on
+  SGLang's verified list for Flint (H200, B200, B300, GB300, DGX Spark).
+- The PRO 6000 is sm_120 (same as the 5060 Ti); it is not on SGLang's verified list for Flint, and FP8-at-load
+  for this MoE on sm_120 is untested.
+- The H100 80 GB cards cannot hold BF16 Flint.
+- Prices and stock from Runpod `list-gpu-types`, 2026-10-22; they change, so re-read before creating anything.
+  Stock was LOW, only on hosts with **CUDA 12.9 or 13.2** → set the pod's CUDA floor to 12.9.
+
+### Keeping the spend low
+
+1. **Setup and debugging time costs more than compute.** Do T9.1 locally so the paid GPU only runs code that
+   already works.
+2. Pilot (T9.3) before the full run (T9.4); stop if acceptance is poor.
+3. Check the credit balance first: Runpod's REST API (and so the MCP) has no balance route; use the console's
+   Billing page or `runpodctl user`.
+4. Delete the pod as soon as the run finishes; copy the head and logs off first.
+
+### Risks
+
+- **SpecForge may not know Flint** (two days old). T9.1 covers it.
+- **BF16 → NVFP4 mismatch:** the head is trained on BF16 hidden states but runs against NVFP4. Recursive says
+  NVFP4 scores within 0.7 points of 16-bit, so expect slightly lower acceptance, not failure. T9.5 fixes it if needed.
+- **Payoff** (*estimate*): Strata's MTP gave 1.6–1.8× on this PC. With Flint's higher expected cache hit rate,
+  the extra tokens in each check mostly use experts already on the GPU, so the gain may be similar or larger.
+- **Order:** do this after T4/T7; the head multiplies whatever engine speed we reach.
 
 ---
 
