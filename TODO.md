@@ -149,12 +149,15 @@ NVFP4 speed (a slow llama.cpp CPU path lowers the baseline); (3) long context ta
 
 ### Phase 3: decide the engine route
 
-- [ ] **T6 (decision)** Route A or B
-  - **A. Add Flint to Strata** (recommended): reuses the expert cache, CPU pool, prompt streaming, prompt lookup
-    and conversation cache. New: Flint attention (sinks + sliding window), NVFP4 kernels (CPU + GPU), GGUF loader
-  - **B. Hot/cold expert split in a llama.cpp fork** (Strata H5): permute experts by hotness (exact), split each
-    layer's expert tensors into a GPU bank and a CPU bank, run both and add the results. Smaller, upstreamable,
-    but none of Strata's other features
+- [x] **T6 (decision)** → **Route B: llama.cpp fork** (decided 2026-10-23)
+  - **A. Add Flint to Strata** (rejected): Strata is 66K lines built around Qwen3.8-Flash-Next (Gated DeltaNet
+    layers, QSA sparse attention, hyper-connections, its own tokenizer and templates) with no NVFP4 kernels. Its
+    design carries over; its code mostly does not. Several weeks, mostly porting
+  - **B. llama.cpp fork** (chosen): Flint already runs correctly there with everything around the MoE (attention
+    with sinks + sliding window, NVFP4 GPU and CPU kernels, chat template, tool parsing, server, prompt cache).
+    ggml's scheduler runs GPU and CPU splits one after another, so the work is **one combined MoE op**: read the
+    layer's expert ids, start the cached experts on the GPU and the misses on a CPU thread pool at the same time,
+    then add. Plus a cache manager (decayed LFU, refreshed on a background CUDA stream). ~1–3 weeks (*estimate*)
 
 ### Phase 4: engine work (weeks)
 

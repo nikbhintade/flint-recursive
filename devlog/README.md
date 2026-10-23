@@ -13,3 +13,4 @@ One file per significant piece of work: **what we did, what we expected, what we
 | 2026-10-23 | [Baseline benchmarks: llama.cpp vs. Ollama](2026-10-23-01-baseline-benchmarks.md) |
 | 2026-10-23 | [Expert routing: how well would a GPU expert cache work? (T4)](2026-10-23-02-expert-routing.md) |
 | 2026-10-23 | [Where decode time goes: CPU and GPU profile (T5)](2026-10-23-03-cpu-profile.md) |
+| 2026-10-23 | [Engine route: llama.cpp fork, not Strata (T6)](2026-10-23-04-engine-route.md) |
