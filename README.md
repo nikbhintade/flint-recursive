@@ -46,6 +46,20 @@ generating text than a tuned llama.cpp. That was the estimate; T7 measured **+27
 
 The plan, the reasoning behind it and every task: **[TODO.md](TODO.md)**. Progress so far: **[devlog/](devlog/README.md)**.
 
+## Run it
+
+```bash
+./run-flint.sh                      # 64K context on http://127.0.0.1:8080/v1 (OpenAI-compatible)
+CTX=32768 ./run-flint.sh            # smaller context, bigger expert cache
+OPENCODE_CONFIG="$PWD/clients/opencode.json" opencode    # in another terminal; pi: see clients/README.md
+```
+
+Needs the NVFP4 model in `flint-nvfp4-gguf/` and llama.cpp built with the newest patch from `patches/`
+(see `patches/README.md`). `run-flint.sh` sets the tuned flags: expert weights in RAM, adaptive GPU expert cache
+sized from the context, P-core threads, n-gram speculation, and Flint's recommended sampling (temperature 1.0).
+Tested for 30 minutes of continuous agent work (stable speed and memory) and with 2 parallel requests
+(`PARALLEL=2`: ~15% more total throughput, each request slower).
+
 ## Layout
 
 ```
@@ -61,6 +75,9 @@ data/               recorded routing and profiles             (not in git)
 README.md           this overview
 TODO.md             plan, background numbers and tasks
 devlog/             one file per step: what we did, expected and got
+run-flint.sh        launcher with the tuned settings
+clients/            OpenCode and pi configs for the local server
+profiles/           expert-routing profile that seeds the GPU expert cache
 ```
 
 ## Links

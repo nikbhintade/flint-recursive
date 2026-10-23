@@ -1,0 +1,38 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "flint-local/flint",
+  "small_model": "flint-local/flint",
+  "provider": {
+    "flint-local": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Flint (local)",
+      "options": {
+        "baseURL": "http://127.0.0.1:8080/v1",
+        "apiKey": "local"
+      },
+      "models": {
+        "flint": {
+          "name": "Flint",
+          "reasoning": true,
+          "interleaved": {
+            "field": "reasoning_content"
+          },
+          "limit": {
+            "context": 65536,
+            "output": 16384
+          }
+        }
+      }
+    }
+  },
+  "agent": {
+    "build": {
+      "temperature": 1.0,
+      "top_p": 0.95
+    },
+    "plan": {
+      "temperature": 1.0,
+      "top_p": 0.95
+    }
+  }
+}

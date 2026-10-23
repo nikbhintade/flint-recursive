@@ -21,3 +21,4 @@ One file per significant piece of work: **what we did, what we expected, what we
 | 2026-10-23 | [Where agent time goes, and a realistic agent benchmark](2026-10-23-09-agent-workload.md) |
 | 2026-10-23 | [Prompt batches overlap uploads with compute: agent work -35% (T12.1)](2026-10-23-10-faster-prompts.md) |
 | 2026-10-23 | [N-gram speculation: +34-69% on code edits](2026-10-23-11-ngram-speculation.md) |
+| 2026-10-23 | [Ready for daily use: launcher, agent configs, soak test](2026-10-23-12-daily-use.md) |

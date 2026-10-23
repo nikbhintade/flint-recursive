@@ -243,6 +243,17 @@ NVFP4 speed (a slow llama.cpp CPU path lowers the baseline); (3) long context ta
     llama-server splits sliding-window chat prompts for context checkpoints, so one turn can pay the per-batch
     expert upload two or three times
 
+### Day-to-day use (2026-10-23)
+
+- [x] `run-flint.sh` launcher (expert cache sized from `CTX`, P-core threads, n-gram speculation, recommended
+  sampling) and OpenCode / pi configs in `clients/` (64K context)
+- [x] Soak test, 30 min of continuous agent episodes (`bench/soak.sh`): 24 of 25 rounds; speed flat (112–119 tok/s),
+  memory flat (29–31 GB RSS, 14.8–15.1 GB VRAM), no engine errors. One round stopped on a greedy repetition loop
+  (`printf 'QQQQ…'` until the 256-token limit, so the tool-call JSON was cut and llama-server answered 500); the
+  benchmark decodes at temperature 0, real use runs at 1.0
+- [x] 2 parallel requests (`PARALLEL=2`, 2 clients, 10 min): stable, no errors; ~15% more total throughput, each
+  request slower (generation is GPU-bound)
+
 ### Phase 5: later / research
 
 - [ ] **T14** Precision by hotness: NVFP4 for hot experts, lower for cold ones (Strata H6b); quality check required
