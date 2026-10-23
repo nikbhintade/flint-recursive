@@ -6,3 +6,6 @@ ollama-0.40.9/
 bench/*.log
 bench/vram*
 bench/*.txt
+data/
+tools/routing/build/
+tools/profile/build/

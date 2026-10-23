@@ -34,7 +34,8 @@ generating text than a tuned llama.cpp. That is an estimate until we measure it.
 - [x] NVFP4 weights downloaded and size-checked
 - [x] llama.cpp built from master with CUDA (Flint support landed after the last release)
 - [x] Baseline: tuned llama.cpp ~79–92 tok/s, Ollama 0.40.9 ~68–73 tok/s (see TODO.md results log)
-- [ ] Expert-routing measurements
+- [x] Expert routing (T4): adaptive GPU expert cache ~89% hits vs. 62% for llama.cpp's layer split
+- [x] Profile (T5): GPU idles 52% of decode waiting for CPU experts; RAM runs at 4800 instead of 6000 MT/s
 - [ ] Decide: add Flint to Strata, or a hot/cold expert split in a llama.cpp fork
 
 The plan, the reasoning behind it and every task: **[TODO.md](TODO.md)**. Progress so far: **[devlog/](devlog/README.md)**.
@@ -46,6 +47,9 @@ flint-nvfp4-gguf/   model weights + pi/OpenCode configs   (not in git)
 llama.cpp/          llama.cpp source and CUDA build        (not in git)
 ollama-0.40.9/      side-by-side Ollama with Flint support (not in git)
 bench/              chat_bench.py (raw outputs stay local)
+tools/routing/      expert-routing recorder and cache simulator (T4)
+tools/profile/      CPU expert-kernel microbenchmark (T5)
+data/               recorded routing and profiles             (not in git)
 README.md           this overview
 TODO.md             plan, background numbers and tasks
 devlog/             one file per step: what we did, expected and got

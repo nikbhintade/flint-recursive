@@ -99,7 +99,9 @@ NVFP4 speed (a slow llama.cpp CPU path lowers the baseline); (3) long context ta
 ### Phase 1: free gains and the baseline (~½ day)
 
 - [ ] **T1** Hardware checks (Strata H10)
-  - RAM speed: `sudo dmidecode -t memory | grep -i speed`; enable XMP if below rated speed (*+10–25%* on the CPU half)
+  - RAM speed: **XMP is off.** The sticks are G.Skill DDR5-6000 CL30 (`F5-6000J3040G32G`, 2 × 32 GB) running at
+    4800 MT/s; measured read bandwidth 70.5 GB/s. **Enable XMP in the BIOS** (*~+25%* on the CPU half), then
+    re-run the T2 sweep and the T5 microbenchmark
   - Plug the monitor into the motherboard (UHD 770) to free the VRAM the desktop uses
   - Confirm PCIe 5.0 x8 under load: `nvidia-smi --query-gpu=pcie.link.gen.current,pcie.link.width.current --format=csv`
 - [x] **T2** Baseline: tuned llama.cpp → **~79–92 tok/s decode, ~1,100 tok/s prompts at 8K** (results log). Best
@@ -118,16 +120,32 @@ NVFP4 speed (a slow llama.cpp CPU path lowers the baseline); (3) long context ta
 
 ### Phase 2: measure what decides the design (~1–2 days)
 
-- [ ] **T4** Record expert routing (Strata H4)
-  - Eval callback on the MoE top-k tensor in llama.cpp (start from `llama-eval-callback`); dump layer × token × 6 ids
-  - Workload: 50–100 coding prompts + agent turns (SWE-bench style)
-  - Offline: hit rate vs. cache size for static profile, LRU and adaptive policies, k-fold (profile on 9/10,
-    score on 1/10), like Strata's `tools/routing_kfold.py`
-  - Also: how often consecutive tokens reuse the same experts (temporal locality)
-  - **Decides:** ≥ 80% hits at ~6,500 slots → build the engine; near-uniform → focus on T6/T9 instead
-- [ ] **T5** Profile the CPU side
-  - How fast is llama.cpp's NVFP4 CPU path on AVX2 (GB/s of expert weights streamed)?
-  - Where does a token's time go (GPU, CPU, syncs)? `nsys` on a short decode
+- [x] **T4** Record expert routing → **adaptive caching reaches ~89% decode hits at 7,424 slots vs. 62% for
+  llama.cpp's layer split: build the engine.** Tools and method: [`tools/routing/`](tools/routing/README.md)
+  - 100 prompts (25 each: HumanEval, SWE-bench Verified issues, agent turns with tools, file tasks), answered by
+    Flint; 181,329 tokens (68,839 generated) replayed with prompts batched and answers one token at a time
+  - Skew is moderate (a layer's top 25% of experts serve 49% of generated-token lookups), but routing has strong
+    short-term locality (84% of a token's experts were used in the previous 64 tokens)
+  - Decode hit rates, 10-fold, at 3,000 / 5,000 / **7,424** / 9,000 slots: layer split 25 / 42 / **62** / 75%;
+    static profile 43 / 62 / **80** / 89%; LRU 60 / 77 / **89.5** / 95%; decayed LFU 60 / 76 / **89.3** / 95%
+    (best hindsight fixed set 93% at 7,424)
+  - Decayed LFU matches LRU with half the PCIe copies (~15 vs. ~30 experts/token at 7,424 slots ≈ 26 MB/token);
+    warming the cache from the prompt's own routing adds nothing on top
+  - CPU work per generated token at 7,424 slots: layer split 108 experts (191 MB) → adaptive ~30 (53 MB)
+  - Agent turns hit a bit less (83%): short answers, little time to adapt
+- [x] **T5** Profile the CPU side → **the GPU idles 52% of decode time waiting for CPU experts**
+  - Decode time is linear in the number of CPU expert layers: **6.98 ms + 0.245 ms per CPU MoE layer** (all-GPU
+    extrapolation: 143 tok/s)
+  - CPU NVFP4 expert kernel alone ([`tools/profile/cpu_moe_bench.cpp`](tools/profile/cpu_moe_bench.cpp)):
+    **207 µs per layer (6 experts) = 51 GB/s** on 14 P-core threads (7 P-cores: 49 GB/s; E-cores: 33; all 30
+    threads: 23). That is 73% of the RAM's measured 70.5 GB/s; inside llama.cpp a CPU layer costs ~245–280 µs,
+    so ~40–75 µs per layer is hand-off
+  - `nsys`, `--n-cpu-moe 20`: GPU kernels busy 48% of the decode window; matrix-vector kernels at ~268 GB/s
+    (~60% of the GPU's 448 GB/s); `quantize_q8_1` (activation quantization) 12% of GPU time; ~1,850 kernels per
+    token
+  - Implication (*estimate*): with ~89% hits the CPU's ~53 MB/token (~1 ms) hides under the GPU's work, so an
+    engine at llama.cpp's GPU efficiency lands near **~145–160 tok/s** (1.6–1.75× the tuned baseline), and
+    ~200 tok/s if GPU kernels reach ~80% of bandwidth
 
 ### Phase 3: decide the engine route
 
@@ -268,3 +286,8 @@ One row per measurement. Never compare runs that changed more than one setting.
 | 2026-10-23 | T2 | llama.cpp `19ab5a5` | `-ncmoe 20/21/23`, `-ub 1024/2048/4096` | 4K prompt | pp4096 | 1,211 / 1,734 / **2,102** tok/s | `-ub 2048` at `-ncmoe 18`: OOM |
 | 2026-10-23 | T2 | llama-server `19ab5a5` | `-ncmoe 20 -c 32768 -ub 1024`, P-pinned | 19 / 2.2K / 8.2K prompts | prompt / gen tok/s | 190–212 / 85.8; 941–953 / 80.7; 1,108 / 78.5 | `bench/chat_bench.py`, 512 generated tokens; answer checked by hand, correct |
 | 2026-10-23 | T3 | Ollama 0.40.9 | auto-fit (20 layers' experts on CPU), 4 threads, `num_ctx` 32768 | 20 / 2.2K / 8.2K prompts | prompt / gen tok/s | 348–401 / 72–73; 616 / 69–70; 655 / 47–68 | Same script; prompt figures from first runs only (repeats hit Ollama's prompt cache) |
+| 2026-10-23 | T4 | route_dump (llama.cpp `19ab5a5`) | `-ncmoe 24 -ub 1024`, answers one token at a time | 100 prompts, 181K tokens | decode hit rate @ 7,424 slots | layer split 61.7%, static 79.8%, LRU 89.5%, decayed LFU 89.3%, prompt-warm 89.4%, oracle 92.6% | 10-fold over prompts; batched replay agrees with token-by-token on 96.3% of expert choices and gives the same statistics within 0.1% |
+| 2026-10-23 | T5 | llama-bench `19ab5a5` | `-ncmoe 18…49`, P-pinned | 128 tokens | tg128 | 91.6 / 84.3 / 77.4 / 72.2 / 68.0 / 63.9 / 58.5 / 54.3 tok/s at ncmoe 18 / 22 / 26 / 30 / 34 / 38 / 42 / 49 | Linear fit: 6.98 ms + 0.245 ms per CPU MoE layer |
+| 2026-10-23 | T5 | cpu_moe_bench (ggml `19ab5a5`) | 6 of 256 NVFP4 experts, 1 token | — | µs per MoE layer | 207 (14 P-threads), 218 (7 P-cores), 240 (8 P-threads), 326 (16 E-cores), 462 (all 30) | 51.3 GB/s best |
+| 2026-10-23 | T5 | membw (scratch) | 4 GB AVX2 read | — | RAM read GB/s | 70.5 (14 P-threads), 69.4 (7), 70.9 (30) | DDR5-6000 kit running at 4800 MT/s (XMP off) |
+| 2026-10-23 | T5 | nsys + llama-bench | `-ncmoe 20`, P-pinned | 64 tokens | GPU busy share | 48% | mul_mat_vec_q 159.5 ms of 197.3 ms busy; quantize_q8_1 24.5 ms; ~1,850 kernels/token |
