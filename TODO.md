@@ -221,7 +221,15 @@ NVFP4 speed (a slow llama.cpp CPU path lowers the baseline); (3) long context ta
 - [ ] **T10** Next-layer expert prediction (pre-gating) to update the cache ahead of time
 - [ ] **T11** Fewer GPU↔CPU round trips per token: CUDA graphs, fused per-layer kernels
 - [ ] **T12** Prompt reading: CPU takes a share of non-cached experts (Strata `b1c88544`); skip streaming cached ones
+  - Measured 2026-10-23 (devlog -09): a prompt batch costs ~0.88 s for ~780 tokens = uploads ~380 ms + GPU
+    compute ~320 ms + cached-expert copies ~60 ms + idle; **uploads and compute never overlap**
+  - [ ] **T12.1** Stream all uncached experts of layer N+1 (79-140 per layer, 8.7 GB per batch) into one of two
+    scratch areas while layer N computes; use cached experts in place. Estimate: agent benchmark ~41 -> ~28 s
+  - [ ] **T12.2** CPU computes the rarely used uncached experts (needs a grouped multi-token CPU kernel, T8)
 - [ ] **T13** Agent prompt-prefix reuse across turns (Strata H7): check the chat template does not rewrite history
+  - Checked 2026-10-23 with `bench/agent_bench.py`: reuse works (73% of prompt tokens reused over 24 turns). But
+    llama-server splits sliding-window chat prompts for context checkpoints, so one turn can pay the per-batch
+    expert upload two or three times
 
 ### Phase 5: later / research
 
@@ -350,3 +358,6 @@ One row per measurement. Never compare runs that changed more than one setting.
 | 2026-10-23 | T7.4 | llama-server `19ab5a5` (fair baseline) | `-ot ...exps\.weight=CPU --moe-cache-mib 12000 --load-mode none` | chat_bench --long, 1 run | gen tok/s short / 8K / 30K; prompt 30K | 93.9 / 88.4 / 73.7; 1,025 | SLRU hit rate 88.1% |
 | 2026-10-23 | T7.4 | llama-server + patch 0003 | same + profile, adaptive | chat_bench --long, 1 run | gen tok/s short / 8K / 30K; prompt 30K | 123.9 / 112.0 / 94.3; 1,033 | +32 / +27 / +28% |
 | 2026-10-23 | T7.4 | baseline / patch 0003 | as above | 25 agent turns, ≤ 256 tokens | wall time; gen tok/s | 49.4 s, 92.9 / 45.7 s, 115.9 | 18,360 prompt tokens dominate |
+| 2026-10-23 | T12 | nsys, patch 0003 | 3 x 779-token raw prompts | — | per prompt: H2D / kernels / D2D / idle | ~380 / ~320 / ~60 / ~120 ms | 7.4 GB uploaded per prompt at 19.6 GB/s; no overlap |
+| 2026-10-23 | T13 | patch 0003 | 493-token agent prompt: chat endpoint vs. raw completion of the same text | — | prompt ms | 1,390 vs. 834 | Checkpoint splits; same at -c 8192 and 32768 |
+| 2026-10-23 | T13 | baseline / patch 0003 | agent_bench, 4 x 6 turns, cache_prompt on | — | wall; prompt s; gen s | 46.4; 28.3; 17.4 / 40.9; 26.9; 13.1 | 19.4K tokens processed, 52.5K reused |

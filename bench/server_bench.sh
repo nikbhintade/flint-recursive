@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Start llama-server with the given extra flags, run chat_bench.py against it, stop it, print MoE cache stats.
-# Usage: [RUNS=2] [MAX_TOKENS=512] [BENCH_ARGS="--long"] bench/server_bench.sh <label> [llama-server flags...]
+# Usage: [RUNS=2] [MAX_TOKENS=512] [BENCH_ARGS="--long"] [AGENT_BENCH="--episodes 4"] bench/server_bench.sh <label> [llama-server flags...]
 # Fixed: Flint NVFP4, 32K context, P-core pinning, flash attention, ubatch 1024. Logs: bench/server-<label>.log
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -16,6 +16,7 @@ for _ in $(seq 180); do
     sleep 1
 done
 echo "== $label: $*  (VRAM used: $(nvidia-smi --query-gpu=memory.used --format=csv,noheader))"
-python3 bench/chat_bench.py llamacpp --runs ${RUNS:-2} --max-tokens ${MAX_TOKENS:-512} ${BENCH_ARGS:-}
+if [ -n "${AGENT_BENCH:-}" ]; then python3 bench/agent_bench.py $AGENT_BENCH; else
+python3 bench/chat_bench.py llamacpp --runs ${RUNS:-2} --max-tokens ${MAX_TOKENS:-512} ${BENCH_ARGS:-}; fi
 kill -INT $pid; wait $pid 2>/dev/null || true
 grep -E 'MoE cache size|slots \(|hits = |large batches' "$log" | sed 's/^/   /'
