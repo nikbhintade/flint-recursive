@@ -9,6 +9,7 @@ Outputs go to `data/routing/` (git-ignored). Results: TODO.md, T4.
 | 2. Answer them with Flint | start `llama-server … --jinja --port 8080`, then `python3 tools/routing/generate.py` | ~25 min |
 | 3. Record routing | stop the server, then `python3 tools/routing/replay.py` | ~20 min |
 | 4. Analyze | `python3 tools/routing/analyze.py` | ~1 min |
+| 5. Static-cache profile (T7.1) | `python3 tools/routing/make_profile.py` | seconds |
 
 ## Building `route_dump`
 

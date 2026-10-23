@@ -171,14 +171,19 @@ NVFP4 speed (a slow llama.cpp CPU path lowers the baseline); (3) long context ta
     misses, **uploads each miss over PCIe** on the compute stream, then the GPU runs all 6 experts. Cost per token:
     ~31.8 misses ≈ 56 MB ≈ 2.3 ms of uploads + 47 host round trips; ~11.9 ms per token vs. 6.98 ms all-on-GPU
   - **Our version builds on it**; what changes is miss handling and synchronization:
-    - [ ] **T7.1** Misses computed on the CPU, in parallel with the GPU's hits, instead of uploaded; result added on
-      the GPU. Static cache contents first. Measure the overlap gain
+    - [x] **T7.1** Misses computed on the CPU, in parallel with the GPU's hits, instead of uploaded; result added on
+      the GPU. Static cache contents first → **110 / 100 / 96.5 tok/s (short / 2K / 8K prompt), +17–28% over the
+      new baseline** with a *lower* hit rate (79.5%, as T4 predicted for a static profile). Quality: KL 0.00295 vs
+      GPU-only, same as llama.cpp's own layer split (0.00285). CPU thread count (8–13) barely matters.
+      [`patches/0001`](patches/README.md). Regression: 2–32-token batches fall back to uploads (19-token prompt
+      26 tok/s), to fix in T7.4
     - [ ] **T7.2** No per-layer host sync: the GPU splits hits/misses itself from a device slot map and posts
       the miss list to mapped pinned memory; CPU workers poll it, compute, and signal back (Strata's "doorbell");
       the whole token can then run as one CUDA graph
     - [ ] **T7.3** Cache contents refreshed in the background (decayed LFU from T4: same hit rate as LRU, half
       the copies) on a separate CUDA stream between tokens
-    - [ ] **T7.4** Keep llama.cpp's large-batch (prompt) path; check prompt speed is unchanged
+    - [ ] **T7.4** Keep llama.cpp's large-batch (prompt) path; check prompt speed is unchanged. Also handle
+      2–32-token batches in the static path (CPU misses for several tokens), they regressed in T7.1
     - Target (*estimate*): ~7–7.5 ms per token ≈ **135–145 tok/s**, ~1.6–1.7× the new baseline
   - Optional: cache-aware routing (Strata `03f59246`), checked with teacher-forced nats/token
 - [ ] **T8** NVFP4 CPU kernel for AVX2 + AVX-VNNI: decode e2m1 to int8 with a 16-entry `pshufb` lookup, VNNI dot
@@ -316,3 +321,5 @@ One row per measurement. Never compare runs that changed more than one setting.
 | 2026-10-23 | T7 | llama-server `19ab5a5` + MoE cache | same + `--load-mode none` | chat_bench | gen tok/s short / 2K / 8K; decode hit rate | 78–82 / 79–81 / 80; 86.0% | 6,517 slots (54.2%); T4 simulator predicted ~86% (LRU) |
 | 2026-10-23 | T7 | llama-server `19ab5a5` + MoE cache | `--n-cpu-moe 49 --moe-cache-mib 12000 --load-mode none` | chat_bench | gen tok/s short / 8K; hit rate | **86.1 / 82.5–82.9**; 88.7% | New baseline; 14.9 GB VRAM |
 | 2026-10-23 | T7 | llama-server `19ab5a5` + MoE cache | `--n-cpu-moe 30 --moe-cache-mib 4000` / `40` + `8000`, no mmap | chat_bench | gen tok/s 8K; hit rate | 73–75 (71.3%) / 78.5–81.5 (83.3%) | Mixed setups lose |
+| 2026-10-23 | T7.1 | logit_dump + patch 0001 | teacher-forced, 4 Flint answers, 1,004 decode positions | — | KL vs GPU-only / top-1 / nats per token | layer split (ncmoe 22): 0.00285 / 98.61% / 0.3499; static: 0.00295 / 98.51% / 0.3511; reference 0.3509 | `tools/quality/` |
+| 2026-10-23 | T7.1 | llama-server + patch 0001 | static cache 12000 MiB, all experts in RAM, 12 / 13 / 8 CPU threads | chat_bench | gen tok/s short / 2K / 8K; hit rate | 110 / 100.5 / 96.5; 105.5 / 100.2 / 96 ; 105 / 99.7 / 96; 79.5–79.8% | No uploads; prompt 8K 1,046 tok/s; 19-token prompt 26 tok/s (regression) |

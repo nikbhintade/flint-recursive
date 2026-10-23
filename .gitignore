@@ -9,3 +9,5 @@ bench/*.txt
 data/
 tools/routing/build/
 tools/profile/build/
+tools/quality/build/
+bench/*.json

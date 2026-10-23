@@ -37,7 +37,8 @@ generating text than a tuned llama.cpp. That is an estimate until we measure it.
 - [x] Expert routing (T4): adaptive GPU expert cache ~89% hits vs. 62% for llama.cpp's layer split
 - [x] Profile (T5): GPU idles 52% of decode waiting for CPU experts; RAM runs at 4800 instead of 6000 MT/s
 - [x] Engine route (T6): llama.cpp fork with a combined GPU + CPU MoE operation
-- [ ] Build the GPU expert cache (T7)
+- [x] T7.1: CPU computes cache misses in parallel → 96–110 tok/s, +17–28% over llama.cpp's cache (patches/0001)
+- [ ] T7.2–T7.4: no per-layer host stop, adaptive cache contents, small batches
 
 The plan, the reasoning behind it and every task: **[TODO.md](TODO.md)**. Progress so far: **[devlog/](devlog/README.md)**.
 
@@ -50,6 +51,8 @@ ollama-0.40.9/      side-by-side Ollama with Flint support (not in git)
 bench/              chat_bench.py (raw outputs stay local)
 tools/routing/      expert-routing recorder and cache simulator (T4)
 tools/profile/      CPU expert-kernel microbenchmark (T5)
+tools/quality/      teacher-forced logit comparison between engine setups
+patches/            our llama.cpp changes, as patches against a fixed commit
 data/               recorded routing and profiles             (not in git)
 README.md           this overview
 TODO.md             plan, background numbers and tasks
