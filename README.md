@@ -37,7 +37,7 @@ generating text than a tuned llama.cpp. That is an estimate until we measure it.
 - [ ] Expert-routing measurements
 - [ ] Decide: add Flint to Strata, or a hot/cold expert split in a llama.cpp fork
 
-The plan, the reasoning behind it and every task: **[TODO.md](TODO.md)**. Progress so far: **[DEVLOG.md](DEVLOG.md)**.
+The plan, the reasoning behind it and every task: **[TODO.md](TODO.md)**. Progress so far: **[devlog/](devlog/README.md)**.
 
 ## Layout
 
@@ -48,7 +48,7 @@ ollama-0.40.9/      side-by-side Ollama with Flint support (not in git)
 bench/              chat_bench.py (raw outputs stay local)
 README.md           this overview
 TODO.md             plan, background numbers and tasks
-DEVLOG.md           what we did, expected and got, by date
+devlog/             one file per step: what we did, expected and got
 ```
 
 ## Links

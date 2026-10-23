@@ -1,0 +1,13 @@
+# Devlog
+
+One file per significant piece of work: **what we did, what we expected, what we got, and the takeaway.** Files are named `YYYY-MM-DD-NN-topic.md`; the newest is at the bottom of this list. Detailed numbers live in the [TODO.md results log](../TODO.md#results-log); plans and reasoning in [TODO.md](../TODO.md).
+
+| Date | Entry |
+|---|---|
+| 2026-10-22 | [Looked into Flint and Recursive](2026-10-22-01-flint-and-recursive.md) |
+| 2026-10-22 | [Can this PC run it?](2026-10-22-02-can-this-pc-run-it.md) |
+| 2026-10-22 | [Download and build](2026-10-22-03-download-and-build.md) |
+| 2026-10-22 | [Can a custom engine beat llama.cpp? Design analysis](2026-10-22-04-engine-design-analysis.md) |
+| 2026-10-22 | [Repo set up](2026-10-22-05-repo-setup.md) |
+| 2026-10-22 | [Draft head and cloud plan (no money spent)](2026-10-22-06-draft-head-and-cloud-plan.md) |
+| 2026-10-23 | [Baseline benchmarks: llama.cpp vs. Ollama](2026-10-23-01-baseline-benchmarks.md) |
