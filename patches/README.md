@@ -11,6 +11,7 @@ the full diff against the base commit at that milestone** (apply one, not severa
 | `0003-adaptive-moe-cache.patch` | `19ab5a5` | T7.3: the cache adapts (decayed use counts, swaps uploaded on a second stream); the CPU follows the device's slot choices |
 | `0004-staged-prompt-experts.patch` | `19ab5a5` | T12.1: prompt batches stage each layer's experts while the previous layer computes; includes the precision fix below |
 | `0005-chunked-small-batches.patch` | `19ab5a5` | Batches of 9-32 tokens read the cache in 8-token chunks (CUDA vector kernels): 5x faster, makes n-gram speculation pay |
+| `0006-cpu-kernel-prompt-share.patch` | `19ab5a5` | Multi-token NVFP4 CPU kernel (AVX2/AVX-VNNI), grouped CPU pool, 1,024-token mailbox; optional CPU share of prompt experts (off: it was slower) |
 | `fix-moe-cache-prec-policy.patch` | `19ab5a5` | Standalone bug fix for upstream llama.cpp's own `--moe-cache-mib` (see below) |
 
 ## Apply and build
@@ -18,7 +19,7 @@ the full diff against the base commit at that milestone** (apply one, not severa
 ```bash
 git clone https://github.com/ggml-org/llama.cpp && cd llama.cpp
 git checkout 19ab5a5   # or the commit in the table
-git apply ../patches/0005-chunked-small-batches.patch   # the newest patch
+git apply ../patches/0006-cpu-kernel-prompt-share.patch   # the newest patch
 cmake -B build -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=120 -DCMAKE_BUILD_TYPE=Release
 cmake --build build --target llama-server -j
 ```
@@ -43,6 +44,8 @@ tensors, which then get copied to the GPU every layer (4-8% slower).
 - `LLAMA_MOE_CACHE_THREADS`: CPU worker threads (default 12).
 - `LLAMA_MOE_CACHE_ADAPT`: `0` keeps the profile's experts fixed; default: adapt.
 - `LLAMA_MOE_CACHE_STAGE`: `0` turns off prompt-batch staging (frees ~0.9 GB for the cache); default: on.
+- `LLAMA_MOE_CACHE_PF_CPU`: share (0-1) of each prompt batch's uncached experts that the CPU computes instead of
+  uploading, coldest first; default 0, because it made prompts slower (see devlog 2026-10-23-13).
 - Needs `--moe-cache-mib` and the experts in RAM. Batches of 1-32 tokens use the hybrid path; larger batches
   (prompts) use llama.cpp's path, which streams experts and reads cached ones from the cache.
 

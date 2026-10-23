@@ -205,8 +205,11 @@ NVFP4 speed (a slow llama.cpp CPU path lowers the baseline); (3) long context ta
     - Idea found in the T7.2 profile: misses still run a GPU matmul on the zero slots (~100 MB of zeros read per
       token); skipping them in `mul_mat_id` could save ~4%
   - Optional: cache-aware routing (Strata `03f59246`), checked with teacher-forced nats/token
-- [ ] **T8** NVFP4 CPU kernel for AVX2 + AVX-VNNI: decode e2m1 to int8 with a 16-entry `pshufb` lookup, VNNI dot
+- [x] **T8** NVFP4 CPU kernel for AVX2 + AVX-VNNI: decode e2m1 to int8 with a 16-entry `pshufb` lookup, VNNI dot
   product with q8 activations, apply the FP8 block scale. Exact; about the cost of Q4_0. Useful for llama.cpp too
+  → done as a *multi-token* kernel (one weight row decoded once for up to 8 tokens) in a CPU pool grouped by expert
+  ([`patches/0006`](patches/README.md)). Correct (KL 0.00232 vs all-GPU); no speed change for generation, where
+  the CPU work was already hidden
 - [ ] **T9** Speculation without MTP
   - [x] Prompt lookup / suffix drafts (cheap; code edits) → llama.cpp's built-in `--spec-type ngram-mod
     --spec-ngram-mod-n-max 8`: code-edit answers **117 → 198 / 157 tok/s (+69% / +34%)**, 94–96% acceptance;
@@ -237,7 +240,12 @@ NVFP4 speed (a slow llama.cpp CPU path lowers the baseline); (3) long context ta
     (2) device copies from the cache stalled the copy stream behind the matmuls (they use SMs), so they run on the
     compute stream and the copy stream only uploads; (3) found and fixed an upstream bug: the activation-precision
     policy was not applied to cached experts (`patches/fix-moe-cache-prec-policy.patch`)
-  - [ ] **T12.2** CPU computes the rarely used uncached experts (needs a grouped multi-token CPU kernel, T8)
+  - [x] **T12.2** CPU computes the rarely used uncached experts (needs a grouped multi-token CPU kernel, T8)
+    → **negative result**: with the coldest 50% / 75% of uncached experts on the CPU, the agent benchmark took
+    39.7 / 48.9 s (30.8 s without) and prompts ran at 657 / 493 tok/s at 2K (1,428 without). The cache's "cold"
+    experts are cold for *generation*; prompt tokens use them a lot (~1.17 of each token's 6 experts went to the
+    CPU, ~7.5 GFLOP per layer per batch). Doing it well needs the expert ids before deciding what to upload, which
+    gives up T12.1's prefetch. Kept as an option (`LLAMA_MOE_CACHE_PF_CPU`), off by default
 - [ ] **T13** Agent prompt-prefix reuse across turns (Strata H7): check the chat template does not rewrite history
   - Checked 2026-10-23 with `bench/agent_bench.py`: reuse works (73% of prompt tokens reused over 24 turns). But
     llama-server splits sliding-window chat prompts for context checkpoints, so one turn can pay the per-batch
@@ -393,3 +401,5 @@ One row per measurement. Never compare runs that changed more than one setting.
 | 2026-10-23 | T9 | batch_bench + patch 0005 | same, cache read in 8-token chunks | — | ms at T = 1 / 8 / 9 / 16 / 32 | 8.0 / 16.4 / 19.5 / 24.9 / 42.4 | |
 | 2026-10-23 | T9 | llama-server + patch 0005 | `--temp 0`, ngram-mod n-max 4 / 8 / 16 vs none | chat_bench --edit (rename / comment), 2,048 tokens | gen tok/s | none 117 / 117; 4: 176 / 143; 8: **198 / 157**; 16: 126 / 123 | Acceptance 98% / 94–96% / 58–77% |
 | 2026-10-23 | T9 | llama-server + patch 0004 | ngram-mod n-max 4 vs none | chat_bench short / 2K / 8K; agent_bench | gen tok/s; agent wall | 121.3 / 114.3 / 166.3 vs 121.4 / 114.4 / 110.3; 31.7 vs 31.1 s | Neutral except copy-heavy answers |
+| 2026-10-23 | T8 | logit_dump + patch 0006 | multi-token CPU kernel, prompt CPU share 0 / 0.5 | 1,004 positions | KL vs all-GPU; nats per token | 0.00232, 0.3470 / 0.00465, 0.3479 | Share 0.5: CPU uses 8-bit activations where the GPU uses 4-bit |
+| 2026-10-23 | T12.2 | llama-server + patch 0006 | prompt CPU share 0 / 0.5 / 0.75 | agent_bench 4 x 6; chat_bench --long | wall s; prompt tok/s 2K / 8K / 30K | 30.8; 1,428 / 1,802 / 1,864 / 39.7; 657 / 1,036 / 999 / 48.9; 493 / 636 / 694 | Generation unchanged; ~1.17 CPU pairs per token per layer at 0.5 |
