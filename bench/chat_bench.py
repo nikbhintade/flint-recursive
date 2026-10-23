@@ -1,7 +1,8 @@
 """Time Flint on real coding prompts through llama-server or Ollama.
 
-Usage: python3 bench/chat_bench.py llamacpp|ollama [--runs N] [--max-tokens N] [--long] [--agent N]
+Usage: python3 bench/chat_bench.py llamacpp|ollama [--runs N] [--max-tokens N] [--long] [--edit] [--agent N]
   --long     also a ~30K-token prompt (needs a 32K context)
+  --edit     instead: two code-edit prompts whose answers copy most of the input (where n-gram speculation helps)
   --agent N  instead: the first N agent turns of data/routing/prompts.jsonl (tools, short answers), total wall time
 
 Prompts: a short question, and two "explain/fix this file" prompts built from llama.cpp source files
@@ -31,6 +32,13 @@ PROMPTS = {
     "short": "Write a Python function that merges overlapping intervals, with a short docstring and two tests.",
     "file-2k": file_prompt([SRC / "models" / "flint.cpp", SRC / "llama-graph.cpp"], 7_000),
     "file-8k": file_prompt([SRC / "llama-graph.cpp", SRC / "llama-model.cpp"], 28_000),
+}
+EDIT_SRC = (SRC / "llama-graph.cpp").read_text()
+EDIT = {
+    "edit-rename": "Rename the variable `n_tokens` to `n_tok` everywhere in this code and output the complete updated code, "
+                   "with no explanation.\n\n```cpp\n" + EDIT_SRC[20_000:24_000] + "\n```",
+    "edit-comment": "Add a one-line comment above every function in this code and output the complete updated code, "
+                    "with no explanation.\n\n```cpp\n" + EDIT_SRC[40_000:44_000] + "\n```",
 }
 LONG = {"file-30k": file_prompt([SRC / "llama-graph.cpp", SRC / "llama-model.cpp", SRC / "llama-context.cpp",
                                  SRC / "llama-vocab.cpp"], 100_000)}
@@ -68,6 +76,7 @@ def main():
     ap.add_argument("--runs", type=int, default=2)
     ap.add_argument("--max-tokens", type=int, default=512)
     ap.add_argument("--long", action="store_true")
+    ap.add_argument("--edit", action="store_true")
     ap.add_argument("--agent", type=int, default=0)
     args = ap.parse_args()
     run = run_llamacpp if args.engine == "llamacpp" else run_ollama
@@ -86,7 +95,7 @@ def main():
         print(f"agent turns {len(rows)}: wall {wall:.1f} s, prompt {n_prompt} tok, generated {n_gen} tok "
               f"({n_gen / t_gen:.1f} tok/s while generating)")
         return
-    prompts = dict(PROMPTS, **LONG) if args.long else PROMPTS
+    prompts = EDIT if args.edit else dict(PROMPTS, **LONG) if args.long else PROMPTS
 
     run(PROMPTS["short"], 16)  # warm-up: load weights, fill caches
     print(f"{'prompt':8} {'run':>3} {'prompt tok':>10} {'prompt tok/s':>12} {'gen tok':>8} {'gen tok/s':>9}")

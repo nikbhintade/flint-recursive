@@ -208,7 +208,12 @@ NVFP4 speed (a slow llama.cpp CPU path lowers the baseline); (3) long context ta
 - [ ] **T8** NVFP4 CPU kernel for AVX2 + AVX-VNNI: decode e2m1 to int8 with a 16-entry `pshufb` lookup, VNNI dot
   product with q8 activations, apply the FP8 block scale. Exact; about the cost of Q4_0. Useful for llama.cpp too
 - [ ] **T9** Speculation without MTP
-  - [ ] Prompt lookup / suffix drafts (cheap; code edits)
+  - [x] Prompt lookup / suffix drafts (cheap; code edits) → llama.cpp's built-in `--spec-type ngram-mod
+    --spec-ngram-mod-n-max 8`: code-edit answers **117 → 198 / 157 tok/s (+69% / +34%)**, 94–96% acceptance;
+    answers that copy little are unchanged; the agent benchmark is neutral (its answers are short tool calls).
+    Needed an engine fix first: batches of 9–32 tokens used CUDA's MMQ, which walks every cache slot (189 ms for a
+    9-token step vs. 16 ms for 8); they now read the cache in 8-token chunks (19.5 ms at 9, 42 ms at 32 tokens).
+    [`patches/0005`](patches/README.md)
   - [ ] EAGLE-3 draft head trained on Flint's hidden states (big; brings back the 1.6–1.8× multiplier).
     Plan and costs: [§4](#4-draft-head-plan-t9)
     - [ ] **T9.1** Local, $0: SpecForge model definition for Flint (attention sinks + sliding window), tested on
@@ -373,3 +378,7 @@ One row per measurement. Never compare runs that changed more than one setting.
 | 2026-10-23 | T12.1 | nsys, patch 0004 (staging, D2D on copy stream) | 779-token prompt | — | compute / copy / union busy | 297 / 501 / 726 ms | 177 copy-stream stalls of ~1.6 ms before D2D copies |
 | 2026-10-23 | T12.1 | llama-server + patch 0004 | staging, D2D on compute stream | 779-token prompt | prompt tok/s | 1,329–1,472 | Was ~900 |
 | 2026-10-23 | T12.1 | llama-server + patch 0004 | same | agent_bench 4 x 6; chat_bench --long | wall s, prompt s; prompt tok/s 2K / 8K / 30K; gen tok/s short / 8K / 30K | 30.2, 18.0; 1,436 / 1,798 / 1,848; 121.0 / 111.6 / 92.6 | KL 0.00247; cache 6,598 slots |
+| 2026-10-23 | T9 | batch_bench + patch 0004 | one decode step of T tokens after a 960-token prompt | — | ms at T = 1 / 8 / 9 / 16 / 32 | 7.8 / 16.3 / 189 / 195 / 213 | Cliff at 9: MMQ walks all cache slots |
+| 2026-10-23 | T9 | batch_bench + patch 0005 | same, cache read in 8-token chunks | — | ms at T = 1 / 8 / 9 / 16 / 32 | 8.0 / 16.4 / 19.5 / 24.9 / 42.4 | |
+| 2026-10-23 | T9 | llama-server + patch 0005 | `--temp 0`, ngram-mod n-max 4 / 8 / 16 vs none | chat_bench --edit (rename / comment), 2,048 tokens | gen tok/s | none 117 / 117; 4: 176 / 143; 8: **198 / 157**; 16: 126 / 123 | Acceptance 98% / 94–96% / 58–77% |
+| 2026-10-23 | T9 | llama-server + patch 0004 | ngram-mod n-max 4 vs none | chat_bench short / 2K / 8K; agent_bench | gen tok/s; agent wall | 121.3 / 114.3 / 166.3 vs 121.4 / 114.4 / 110.3; 31.7 vs 31.1 s | Neutral except copy-heavy answers |

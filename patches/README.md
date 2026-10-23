@@ -10,6 +10,7 @@ the full diff against the base commit at that milestone** (apply one, not severa
 | `0002-moe-host-mailbox.patch` | `19ab5a5` | T7.2: no per-layer host sync; two ggml ops pass the misses to the CPU through pinned memory; 1-32 token batches |
 | `0003-adaptive-moe-cache.patch` | `19ab5a5` | T7.3: the cache adapts (decayed use counts, swaps uploaded on a second stream); the CPU follows the device's slot choices |
 | `0004-staged-prompt-experts.patch` | `19ab5a5` | T12.1: prompt batches stage each layer's experts while the previous layer computes; includes the precision fix below |
+| `0005-chunked-small-batches.patch` | `19ab5a5` | Batches of 9-32 tokens read the cache in 8-token chunks (CUDA vector kernels): 5x faster, makes n-gram speculation pay |
 | `fix-moe-cache-prec-policy.patch` | `19ab5a5` | Standalone bug fix for upstream llama.cpp's own `--moe-cache-mib` (see below) |
 
 ## Apply and build
@@ -17,7 +18,7 @@ the full diff against the base commit at that milestone** (apply one, not severa
 ```bash
 git clone https://github.com/ggml-org/llama.cpp && cd llama.cpp
 git checkout 19ab5a5   # or the commit in the table
-git apply ../patches/0004-staged-prompt-experts.patch   # the newest patch
+git apply ../patches/0005-chunked-small-batches.patch   # the newest patch
 cmake -B build -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=120 -DCMAKE_BUILD_TYPE=Release
 cmake --build build --target llama-server -j
 ```
@@ -29,8 +30,11 @@ python3 tools/routing/make_profile.py    # data/routing/profile.txt from the T4 
 LLAMA_MOE_CACHE_PROFILE=$PWD/data/routing/profile.txt \
 taskset -c 0-7,10-15 llama.cpp/build/bin/llama-server -m flint-nvfp4-gguf/flint-nvfp4.gguf \
     -ngl 99 -ot 'blk\.[0-9]+\.ffn_(up|down|gate)_exps\.weight=CPU' --moe-cache-mib 12000 --load-mode none \
-    -c 32768 -fa on -ub 1024 -t 14 --jinja
+    -c 32768 -fa on -ub 1024 -t 14 --jinja --spec-type ngram-mod --spec-ngram-mod-n-max 8
 ```
+
+`--spec-type ngram-mod --spec-ngram-mod-n-max 8`: n-gram speculation (drafts copied from earlier text, verified in one
+step). +34-69% on answers that copy code, no change on others. Keep drafts at 8 or fewer tokens.
 
 `-ot ... \.weight=CPU` keeps only the expert weights in RAM; `--n-cpu-moe` also moves the small expert scale
 tensors, which then get copied to the GPU every layer (4-8% slower).
