@@ -281,6 +281,21 @@ NVFP4 speed (a slow llama.cpp CPU path lowers the baseline); (3) long context ta
 
 - [ ] **T14** Precision by hotness: NVFP4 for hot experts, lower for cold ones (Strata H6b); quality check required
 - [ ] **T15** Long context: measure how much hit rate drops at 64K / 128K as KV takes VRAM
+  - [ ] **T15.1 Largest-context baseline, llama.cpp vs. ours.** Flint's native window is 262,144 tokens (config
+    `max_position_embeddings`; Recursive recommends ≤ 256K). Run both engines at `-c 262144` with the same prompt
+    file (~250K tokens of real source code) and record: does it load and fit, prompt tok/s over the whole prompt,
+    generation tok/s after it, time to first token, VRAM, expert-cache size and decode hit rate. Then the same at 128K
+    and 64K, to see where each engine falls off
+    - llama.cpp: its best setup (`-ot ...exps\.weight=CPU --moe-cache-mib <fits> --load-mode none`, P-cores), and
+      its default `--n-cpu-moe` setup for reference
+    - Ours: `CTX=262144 ./run-flint.sh` (cache sized automatically, ~5.5 GB at 256K with f16 KV)
+  - [ ] **T15.2 q8_0 KV cache test.** Today the KV cache is f16 (~29 KB per token: 1.8 GB at 64K, 7.5 GB at 256K);
+    `-ctk q8_0 -ctv q8_0` halves it and gives the VRAM back to the expert cache (~+0.9 GB at 64K, ~+3.6 GB at 256K)
+    - Quality: teacher-forced KL vs. f16 KV on the usual set (`tools/quality/`), plus a long-context check (the
+      prompt from T15.1), since KV precision matters most far back in the context
+    - Speed: generation and prompt tok/s at 64K, 128K, 256K, f16 vs. q8_0, ours (and llama.cpp at 256K)
+    - If quality holds: make q8_0 the default in `run-flint.sh` and size the cache from the smaller KV
+  - Run after the T9 pilot (the GPU is busy with it)
 - [ ] **T16** Batching: total throughput with 2–4 parallel requests (Strata H2)
 
 ---
