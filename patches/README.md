@@ -8,13 +8,14 @@ the full diff against the base commit at that milestone** (apply one, not severa
 |---|---|---|
 | `0001-static-moe-cache-cpu-misses.patch` | `19ab5a5` | T7.1: static GPU expert cache; the CPU computes the misses while the GPU computes the hits |
 | `0002-moe-host-mailbox.patch` | `19ab5a5` | T7.2: no per-layer host sync; two ggml ops pass the misses to the CPU through pinned memory; 1-32 token batches |
+| `0003-adaptive-moe-cache.patch` | `19ab5a5` | T7.3: the cache adapts (decayed use counts, swaps uploaded on a second stream); the CPU follows the device's slot choices |
 
 ## Apply and build
 
 ```bash
 git clone https://github.com/ggml-org/llama.cpp && cd llama.cpp
 git checkout 19ab5a5   # or the commit in the table
-git apply ../patches/0002-moe-host-mailbox.patch   # the newest patch
+git apply ../patches/0003-adaptive-moe-cache.patch   # the newest patch
 cmake -B build -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=120 -DCMAKE_BUILD_TYPE=Release
 cmake --build build --target llama-server -j
 ```
@@ -34,8 +35,19 @@ tensors, which then get copied to the GPU every layer (4-8% slower).
 
 - `LLAMA_MOE_CACHE_PROFILE`: enables the static cache; a text file of `layer expert count` lines, most used first.
 - `LLAMA_MOE_CACHE_THREADS`: CPU worker threads (default 12).
+- `LLAMA_MOE_CACHE_ADAPT`: `0` keeps the profile's experts fixed; default: adapt.
 - Needs `--moe-cache-mib` and the experts in RAM. Batches of 1-32 tokens use the hybrid path; larger batches
   (prompts) use llama.cpp's path, which streams experts and reads cached ones from the cache.
+
+## How 0003 adds adaptation
+
+- The send kernel also writes the slots it used to the mailbox; the CPU computes exactly the experts the device read
+  from a zero slot, so the two always agree even while the cache changes.
+- The host thread counts every expert use. Before each graph (`llama_context::graph_compute` calls `refresh()`),
+  every 16 ubatches the counts are decayed (half-life 256 ubatches) and up to 256 hotter experts replace the coldest
+  cached ones: (1) the victims leave the slot maps, (2) a second CUDA stream uploads the new experts after an event
+  that follows all queued work, (3) at a later refresh, once the upload is done, they enter the slot maps.
+  No kernel reads a slot while it is written.
 
 ## How 0002 works
 

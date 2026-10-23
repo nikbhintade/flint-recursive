@@ -27,7 +27,8 @@ The model does not fit in VRAM, so part of the work has to run on the CPU from s
 Flint reads only about 0.5 GB of expert weights per token, and about half of its 12,032 experts fit in VRAM. An
 engine that **keeps the most-used experts on the GPU and computes the rest on the CPU at the same time**, as
 [Strata](https://github.com/Niko1221/Strata) does for another MoE model, should be roughly **1.6–2.2× faster** at
-generating text than a tuned llama.cpp. That is an estimate until we measure it.
+generating text than a tuned llama.cpp. That was the estimate; T7 measured **+27–32%** over llama.cpp's best setup
+(about 124 tok/s generating with a short prompt, 94 tok/s after a 30K-token prompt).
 
 ## Status
 
@@ -38,8 +39,8 @@ generating text than a tuned llama.cpp. That is an estimate until we measure it.
 - [x] Profile (T5): GPU idles 52% of decode waiting for CPU experts; RAM runs at 4800 instead of 6000 MT/s
 - [x] Engine route (T6): llama.cpp fork with a combined GPU + CPU MoE operation
 - [x] T7.1: CPU computes cache misses in parallel → 96–110 tok/s, +17–28% over llama.cpp's cache (patches/0001)
-- [x] T7.2: no per-layer host round trips → 112–125 tok/s, +36–45% over llama.cpp's cache (patches/0002)
-- [ ] T7.3–T7.4: adaptive cache contents, workload checks
+- [x] T7.2: no per-layer host round trips (patches/0002)
+- [x] T7.3–T7.4: adaptive cache, workload checks → **124 / 112 / 94 tok/s (short / 8K / 30K prompt), +27–32% over llama.cpp's best setup** (patches/0003)
 
 The plan, the reasoning behind it and every task: **[TODO.md](TODO.md)**. Progress so far: **[devlog/](devlog/README.md)**.
 

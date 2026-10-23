@@ -161,7 +161,7 @@ NVFP4 speed (a slow llama.cpp CPU path lowers the baseline); (3) long context ta
 
 ### Phase 4: engine work (weeks)
 
-- [ ] **T7** Per-expert VRAM cache with CPU computing misses in parallel (the core; adaptive policy from T4)
+- [x] **T7** Per-expert VRAM cache with CPU computing misses in parallel (the core; adaptive policy from T4)
   - **Found 2026-10-23: llama.cpp master already has a GPU expert cache**, `--moe-cache-mib N`
     (`src/llama-moe-cache.cpp`, SLRU policy). Best setup: `--n-cpu-moe 49 --moe-cache-mib 12000 --load-mode none`
     → **88.7% decode hits, 82.5–86 tok/s**, slightly ahead of the layer split (78.5–85.8). This is the new
@@ -184,12 +184,23 @@ NVFP4 speed (a slow llama.cpp CPU path lowers the baseline); (3) long context ta
       [`patches/0002`](patches/README.md). Also: `-ot ...exps\.weight=CPU` instead of `--n-cpu-moe` keeps the
       expert scales on the GPU (+4–8% on T7.1). Bug found on the way: one shared zero slot made `mul_mat_id`
       read an expert twice for a token, which crashes MMQ (batches > 8); fixed with one zero slot per rank
-    - [ ] **T7.3** Cache contents refreshed in the background (decayed LFU from T4: same hit rate as LRU, half
-      the copies) on a separate CUDA stream between tokens
+    - [x] **T7.3** Cache contents refreshed in the background (decayed LFU from T4: same hit rate as LRU, half
+      the copies) on a separate CUDA stream between tokens → hit rate **79.9% → 86.4%**, CPU misses −30%, ~5.6
+      swaps per token (~0.65 GB/s of background PCIe), **no speed change**: since T7.2 the GPU is the limit and the
+      CPU's share was already hidden. Worth it for batches and speculation (T9), where CPU work grows. KL 0.00227.
+      [`patches/0003`](patches/README.md)
     - [ ] **T7.4** Keep llama.cpp's large-batch (prompt) path; check prompt speed is unchanged. Also handle
       2–32-token batches in the static path (CPU misses for several tokens), they regressed in T7.1.
       *Partly done in T7.2*: 1–32-token batches use the mailbox (19-token prompt 127–139 tok/s again; 8K
-      prompt 1,075 tok/s vs. 1,059 baseline). Left: agent-style workload check, long-context check
+      prompt 1,075 tok/s vs. 1,059 baseline). Left: agent-style workload check, long-context check.
+      **Done:** against a *fair* baseline (llama.cpp cache with the same `-ot ...exps\.weight=CPU` flag):
+      generation 93.9 → **123.9** (short), 88.4 → **112.0** (8K), 73.7 → **94.3** (30K prompt) tok/s,
+      **+27–32%**; prompt reading unchanged (30K: 1,025 vs 1,033 tok/s); 25 agent turns 49.4 → 45.7 s (−7.5%,
+      mostly prompt reading)
+  - **T7 result:** +27–32% generation over the best llama.cpp configuration found, +44% over llama.cpp's default
+    `--n-cpu-moe` cache setup; quality unchanged. The earlier "+36–45%" compared with the `--n-cpu-moe` baseline
+  - Not done, on purpose: cache-aware routing (only cuts CPU work, which is hidden now); skipping the zero-slot
+    matmuls (~3%, a GPU-kernel change → T11)
     - Target (*estimate*): ~7–7.5 ms per token ≈ **135–145 tok/s**, ~1.6–1.7× the new baseline
     - Idea found in the T7.2 profile: misses still run a GPU matmul on the zero slots (~100 MB of zeros read per
       token); skipping them in `mul_mat_id` could save ~4%
@@ -334,3 +345,8 @@ One row per measurement. Never compare runs that changed more than one setting.
 | 2026-10-23 | T7.2 | llama-server + patch 0001 | `-ot ...exps\.weight=CPU` instead of `--n-cpu-moe` | chat_bench | gen tok/s short / 2K / 8K | 114 / 108 / 104 | Expert scales stay on the GPU; 4 fewer host copies per layer |
 | 2026-10-23 | T7.2 | llama-server + patch 0002 | mailbox, 12 / 8 CPU threads | chat_bench | gen tok/s short / 2K / 8K; prompt 19 / 8K tokens; hit rate | 124.5 / 117 / 112.5 (both); 127–139 / 1,075; 79.9% | GPU busy 90% under nsys, one CUDA graph per token |
 | 2026-10-23 | T7.2 | logit_dump + patch 0002 | teacher-forced, same 1,004 positions | — | KL vs GPU-only / top-1 / nats per token | 0.00294 / 98.51% / 0.3506 | Same as T7.1 and the layer split |
+| 2026-10-23 | T7.3 | llama-server + patch 0003 | adaptive, refresh every 16 ubatches, ≤ 256 swaps | chat_bench | gen tok/s short / 2K / 8K; hit rate | 123.5–127.6 / 115.9–117.7 / 112.4–112.8; 86.4% | 17,410 swaps (29.4 GB) over ~3,100 tokens; misses 121K vs 172K static |
+| 2026-10-23 | T7.3 | logit_dump + patch 0003 | adaptive, same 1,004 positions | — | KL / top-1 / nats per token | 0.00227 / 98.41% / 0.3509 | 8,733 swaps during the run |
+| 2026-10-23 | T7.4 | llama-server `19ab5a5` (fair baseline) | `-ot ...exps\.weight=CPU --moe-cache-mib 12000 --load-mode none` | chat_bench --long, 1 run | gen tok/s short / 8K / 30K; prompt 30K | 93.9 / 88.4 / 73.7; 1,025 | SLRU hit rate 88.1% |
+| 2026-10-23 | T7.4 | llama-server + patch 0003 | same + profile, adaptive | chat_bench --long, 1 run | gen tok/s short / 8K / 30K; prompt 30K | 123.9 / 112.0 / 94.3; 1,033 | +32 / +27 / +28% |
+| 2026-10-23 | T7.4 | baseline / patch 0003 | as above | 25 agent turns, ≤ 256 tokens | wall time; gen tok/s | 49.4 s, 92.9 / 45.7 s, 115.9 | 18,360 prompt tokens dominate |
