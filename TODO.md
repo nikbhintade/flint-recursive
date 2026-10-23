@@ -223,8 +223,15 @@ NVFP4 speed (a slow llama.cpp CPU path lowers the baseline); (3) long context ta
 - [ ] **T12** Prompt reading: CPU takes a share of non-cached experts (Strata `b1c88544`); skip streaming cached ones
   - Measured 2026-10-23 (devlog -09): a prompt batch costs ~0.88 s for ~780 tokens = uploads ~380 ms + GPU
     compute ~320 ms + cached-expert copies ~60 ms + idle; **uploads and compute never overlap**
-  - [ ] **T12.1** Stream all uncached experts of layer N+1 (79-140 per layer, 8.7 GB per batch) into one of two
+  - [x] **T12.1** Stream all uncached experts of layer N+1 (79-140 per layer, 8.7 GB per batch) into one of two
     scratch areas while layer N computes; use cached experts in place. Estimate: agent benchmark ~41 -> ~28 s
+    → **agent benchmark 30.2 s** (T7 40.9, llama.cpp 46.4: −35%); prompts 2K / 8K / 30K **1,436 / 1,798 / 1,848
+    tok/s** (+70–80%); generation and quality unchanged (KL 0.00247). [`patches/0004`](patches/README.md).
+    What it took: (1) in-place reads of the 7,400-slot cache made MMQ walk every slot (800 ms of matmuls per
+    prompt), so each layer's experts are *staged* into one of two 256-expert tensors instead (~0.9 GB of cache);
+    (2) device copies from the cache stalled the copy stream behind the matmuls (they use SMs), so they run on the
+    compute stream and the copy stream only uploads; (3) found and fixed an upstream bug: the activation-precision
+    policy was not applied to cached experts (`patches/fix-moe-cache-prec-policy.patch`)
   - [ ] **T12.2** CPU computes the rarely used uncached experts (needs a grouped multi-token CPU kernel, T8)
 - [ ] **T13** Agent prompt-prefix reuse across turns (Strata H7): check the chat template does not rewrite history
   - Checked 2026-10-23 with `bench/agent_bench.py`: reuse works (73% of prompt tokens reused over 24 turns). But
@@ -361,3 +368,8 @@ One row per measurement. Never compare runs that changed more than one setting.
 | 2026-10-23 | T12 | nsys, patch 0003 | 3 x 779-token raw prompts | — | per prompt: H2D / kernels / D2D / idle | ~380 / ~320 / ~60 / ~120 ms | 7.4 GB uploaded per prompt at 19.6 GB/s; no overlap |
 | 2026-10-23 | T13 | patch 0003 | 493-token agent prompt: chat endpoint vs. raw completion of the same text | — | prompt ms | 1,390 vs. 834 | Checkpoint splits; same at -c 8192 and 32768 |
 | 2026-10-23 | T13 | baseline / patch 0003 | agent_bench, 4 x 6 turns, cache_prompt on | — | wall; prompt s; gen s | 46.4; 28.3; 17.4 / 40.9; 26.9; 13.1 | 19.4K tokens processed, 52.5K reused |
+| 2026-10-23 | T12.1 | patch 0004 (scratch slots, first try) | in-place MMQ on the 7,400-slot cache | 779-token prompt | prompt tok/s; mul_mat_q ms | 464–482; 800 ms | MMQ walks every slot; agent bench 53.4 s (worse) |
+| 2026-10-23 | T12.1 | logit_dump | scratch-slot version, before / after the precision fix | 1,004 positions | KL vs all-GPU | 0.00956 / 0.00273 | Fix: `prec_policy->apply(res, w)` |
+| 2026-10-23 | T12.1 | nsys, patch 0004 (staging, D2D on copy stream) | 779-token prompt | — | compute / copy / union busy | 297 / 501 / 726 ms | 177 copy-stream stalls of ~1.6 ms before D2D copies |
+| 2026-10-23 | T12.1 | llama-server + patch 0004 | staging, D2D on compute stream | 779-token prompt | prompt tok/s | 1,329–1,472 | Was ~900 |
+| 2026-10-23 | T12.1 | llama-server + patch 0004 | same | agent_bench 4 x 6; chat_bench --long | wall s, prompt s; prompt tok/s 2K / 8K / 30K; gen tok/s short / 8K / 30K | 30.2, 18.0; 1,436 / 1,798 / 1,848; 121.0 / 111.6 / 92.6 | KL 0.00247; cache 6,598 slots |

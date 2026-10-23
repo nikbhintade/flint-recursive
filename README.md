@@ -41,6 +41,7 @@ generating text than a tuned llama.cpp. That was the estimate; T7 measured **+27
 - [x] T7.1: CPU computes cache misses in parallel → 96–110 tok/s, +17–28% over llama.cpp's cache (patches/0001)
 - [x] T7.2: no per-layer host round trips (patches/0002)
 - [x] T7.3–T7.4: adaptive cache, workload checks → **124 / 112 / 94 tok/s (short / 8K / 30K prompt), +27–32% over llama.cpp's best setup** (patches/0003)
+- [x] T12.1: prompt batches overlap expert uploads with compute → prompts **+70–80%**, multi-turn agent benchmark **30.2 s vs 46.4 s for llama.cpp (−35%)** (patches/0004); also found an upstream llama.cpp bug (patches/fix-moe-cache-prec-policy.patch)
 
 The plan, the reasoning behind it and every task: **[TODO.md](TODO.md)**. Progress so far: **[devlog/](devlog/README.md)**.
 

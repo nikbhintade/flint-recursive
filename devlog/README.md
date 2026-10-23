@@ -19,3 +19,4 @@ One file per significant piece of work: **what we did, what we expected, what we
 | 2026-10-23 | [No host round trips: +36-45% (T7.2)](2026-10-23-07-no-host-sync.md) |
 | 2026-10-23 | [Adaptive cache, workload checks, and an honest baseline (T7.3, T7.4)](2026-10-23-08-adaptive-cache-and-checks.md) |
 | 2026-10-23 | [Where agent time goes, and a realistic agent benchmark](2026-10-23-09-agent-workload.md) |
+| 2026-10-23 | [Prompt batches overlap uploads with compute: agent work -35% (T12.1)](2026-10-23-10-faster-prompts.md) |

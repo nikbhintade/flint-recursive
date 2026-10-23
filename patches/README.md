@@ -9,13 +9,15 @@ the full diff against the base commit at that milestone** (apply one, not severa
 | `0001-static-moe-cache-cpu-misses.patch` | `19ab5a5` | T7.1: static GPU expert cache; the CPU computes the misses while the GPU computes the hits |
 | `0002-moe-host-mailbox.patch` | `19ab5a5` | T7.2: no per-layer host sync; two ggml ops pass the misses to the CPU through pinned memory; 1-32 token batches |
 | `0003-adaptive-moe-cache.patch` | `19ab5a5` | T7.3: the cache adapts (decayed use counts, swaps uploaded on a second stream); the CPU follows the device's slot choices |
+| `0004-staged-prompt-experts.patch` | `19ab5a5` | T12.1: prompt batches stage each layer's experts while the previous layer computes; includes the precision fix below |
+| `fix-moe-cache-prec-policy.patch` | `19ab5a5` | Standalone bug fix for upstream llama.cpp's own `--moe-cache-mib` (see below) |
 
 ## Apply and build
 
 ```bash
 git clone https://github.com/ggml-org/llama.cpp && cd llama.cpp
 git checkout 19ab5a5   # or the commit in the table
-git apply ../patches/0003-adaptive-moe-cache.patch   # the newest patch
+git apply ../patches/0004-staged-prompt-experts.patch   # the newest patch
 cmake -B build -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=120 -DCMAKE_BUILD_TYPE=Release
 cmake --build build --target llama-server -j
 ```
@@ -36,8 +38,29 @@ tensors, which then get copied to the GPU every layer (4-8% slower).
 - `LLAMA_MOE_CACHE_PROFILE`: enables the static cache; a text file of `layer expert count` lines, most used first.
 - `LLAMA_MOE_CACHE_THREADS`: CPU worker threads (default 12).
 - `LLAMA_MOE_CACHE_ADAPT`: `0` keeps the profile's experts fixed; default: adapt.
+- `LLAMA_MOE_CACHE_STAGE`: `0` turns off prompt-batch staging (frees ~0.9 GB for the cache); default: on.
 - Needs `--moe-cache-mib` and the experts in RAM. Batches of 1-32 tokens use the hybrid path; larger batches
   (prompts) use llama.cpp's path, which streams experts and reads cached ones from the cache.
+
+## How 0004 speeds up prompts
+
+- Batches of more than 32 tokens use two staging tensors per expert matrix, each holding all 256 experts of one
+  layer, used by alternate layers. The matmuls read them with the original expert ids, so CUDA's MMQ sees the usual
+  256 experts (reading the 7,400-slot cache in place made MMQ ~2.5x slower: it walks every expert).
+- A `GGML_OP_MOE_HOST_CALL` node before each layer's experts runs host code as the graph is queued: it queues the
+  upload of the uncached experts of this and the next layer on a second CUDA stream (after the event that says the
+  staging area is free), copies the cached experts from the cache on the compute stream (device copies use the SMs,
+  so on the copy stream they stalled behind the matmuls), and makes the compute stream wait for the upload. A second
+  node after the experts records that the area is free. Graphs with these nodes are never captured as CUDA graphs.
+- Per prompt batch: ~444 ms of uploads now overlap ~350 ms of compute and cache copies.
+
+## Upstream bug fixed on the way (`fix-moe-cache-prec-policy.patch`)
+
+Flint's NVFP4 GGUF stores per-tensor activation precision (`general.tensor_extra.prec_a4`): some expert matrices
+must run with 8-bit activations. `llama_prec_policy::apply()` looks it up by the matmul's weight tensor, which is the
+cache bank when experts come from `--moe-cache-mib`, so the lookup fails and CUDA's MMQ falls back to 4-bit
+activations for every expert. In llama.cpp itself this hits batches of 9-32 tokens served from the cache (MMQ);
+single tokens (MMVQ) are not affected. The fix looks the policy up by the original weight.
 
 ## How 0003 adds adaptation
 

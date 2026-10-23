@@ -1,0 +1,44 @@
+diff -ru a/src/llama-graph.cpp b/src/llama-graph.cpp
+--- a/src/llama-graph.cpp	2026-10-23 16:14:07.646314096 +0530
++++ b/src/llama-graph.cpp	2026-10-23 16:14:24.825730946 +0530
+@@ -1718,7 +1718,8 @@
+         ggml_mul_mat_id(ctx0, moe_cache->get_experts(w), cur_mm, slots);
+ 
+     if (prec_policy) {
+-        prec_policy->apply(res);
++        // the cached experts are a copy of w, so they take its precision
++        prec_policy->apply(res, w);
+     }
+ 
+     if (w->type == GGML_TYPE_NVFP4) {
+diff -ru a/src/llama-model.cpp b/src/llama-model.cpp
+--- a/src/llama-model.cpp	2026-10-23 16:14:07.641313998 +0530
++++ b/src/llama-model.cpp	2026-10-23 16:14:07.669481828 +0530
+@@ -1287,12 +1287,12 @@
+     std::vector<float> tensor_split_owned;
+ };
+ 
+-bool llama_prec_policy::apply(ggml_tensor * res) const {
++bool llama_prec_policy::apply(ggml_tensor * res, const ggml_tensor * key) const {
+     if (!res || !res->src[0]) {
+         return false;
+     }
+ 
+-    const auto it = prec_src1.find(res->src[0]);
++    const auto it = prec_src1.find(key ? key : res->src[0]);
+     if (it == prec_src1.end()) {
+         return false;
+     }
+diff -ru a/src/llama-model.h b/src/llama-model.h
+--- a/src/llama-model.h	2026-10-23 16:14:07.637313919 +0530
++++ b/src/llama-model.h	2026-10-23 16:14:07.667962648 +0530
+@@ -662,7 +662,8 @@
+     // the key is the weight tensor `res->src[0]`, stores the recommended activation precision type
+     std::unordered_map<const ggml_tensor *, ggml_prec> prec_src1;
+ 
+-    bool apply(ggml_tensor * res) const;
++    // key: the weight to look up, if res->src[0] is a copy of it (e.g. in the MoE cache)
++    bool apply(ggml_tensor * res, const ggml_tensor * key = nullptr) const;
+ 
+     void load(llama_model_loader & ml, const llama_model & model);
+ };
