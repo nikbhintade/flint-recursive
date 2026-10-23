@@ -177,14 +177,22 @@ NVFP4 speed (a slow llama.cpp CPU path lowers the baseline); (3) long context ta
       GPU-only, same as llama.cpp's own layer split (0.00285). CPU thread count (8–13) barely matters.
       [`patches/0001`](patches/README.md). Regression: 2–32-token batches fall back to uploads (19-token prompt
       26 tok/s), to fix in T7.4
-    - [ ] **T7.2** No per-layer host sync: the GPU splits hits/misses itself from a device slot map and posts
+    - [x] **T7.2** No per-layer host sync: the GPU splits hits/misses itself from a device slot map and posts
       the miss list to mapped pinned memory; CPU workers poll it, compute, and signal back (Strata's "doorbell");
-      the whole token can then run as one CUDA graph
+      the whole token can then run as one CUDA graph → **124.5 / 117 / 112.5 tok/s, +36–45% over llama.cpp's
+      cache**; GPU busy 61% → 90%; one CUDA graph per token; KL vs all-GPU 0.00294 (unchanged).
+      [`patches/0002`](patches/README.md). Also: `-ot ...exps\.weight=CPU` instead of `--n-cpu-moe` keeps the
+      expert scales on the GPU (+4–8% on T7.1). Bug found on the way: one shared zero slot made `mul_mat_id`
+      read an expert twice for a token, which crashes MMQ (batches > 8); fixed with one zero slot per rank
     - [ ] **T7.3** Cache contents refreshed in the background (decayed LFU from T4: same hit rate as LRU, half
       the copies) on a separate CUDA stream between tokens
     - [ ] **T7.4** Keep llama.cpp's large-batch (prompt) path; check prompt speed is unchanged. Also handle
-      2–32-token batches in the static path (CPU misses for several tokens), they regressed in T7.1
+      2–32-token batches in the static path (CPU misses for several tokens), they regressed in T7.1.
+      *Partly done in T7.2*: 1–32-token batches use the mailbox (19-token prompt 127–139 tok/s again; 8K
+      prompt 1,075 tok/s vs. 1,059 baseline). Left: agent-style workload check, long-context check
     - Target (*estimate*): ~7–7.5 ms per token ≈ **135–145 tok/s**, ~1.6–1.7× the new baseline
+    - Idea found in the T7.2 profile: misses still run a GPU matmul on the zero slots (~100 MB of zeros read per
+      token); skipping them in `mul_mat_id` could save ~4%
   - Optional: cache-aware routing (Strata `03f59246`), checked with teacher-forced nats/token
 - [ ] **T8** NVFP4 CPU kernel for AVX2 + AVX-VNNI: decode e2m1 to int8 with a 16-entry `pshufb` lookup, VNNI dot
   product with q8 activations, apply the FP8 block scale. Exact; about the cost of Q4_0. Useful for llama.cpp too
@@ -323,3 +331,6 @@ One row per measurement. Never compare runs that changed more than one setting.
 | 2026-10-23 | T7 | llama-server `19ab5a5` + MoE cache | `--n-cpu-moe 30 --moe-cache-mib 4000` / `40` + `8000`, no mmap | chat_bench | gen tok/s 8K; hit rate | 73–75 (71.3%) / 78.5–81.5 (83.3%) | Mixed setups lose |
 | 2026-10-23 | T7.1 | logit_dump + patch 0001 | teacher-forced, 4 Flint answers, 1,004 decode positions | — | KL vs GPU-only / top-1 / nats per token | layer split (ncmoe 22): 0.00285 / 98.61% / 0.3499; static: 0.00295 / 98.51% / 0.3511; reference 0.3509 | `tools/quality/` |
 | 2026-10-23 | T7.1 | llama-server + patch 0001 | static cache 12000 MiB, all experts in RAM, 12 / 13 / 8 CPU threads | chat_bench | gen tok/s short / 2K / 8K; hit rate | 110 / 100.5 / 96.5; 105.5 / 100.2 / 96 ; 105 / 99.7 / 96; 79.5–79.8% | No uploads; prompt 8K 1,046 tok/s; 19-token prompt 26 tok/s (regression) |
+| 2026-10-23 | T7.2 | llama-server + patch 0001 | `-ot ...exps\.weight=CPU` instead of `--n-cpu-moe` | chat_bench | gen tok/s short / 2K / 8K | 114 / 108 / 104 | Expert scales stay on the GPU; 4 fewer host copies per layer |
+| 2026-10-23 | T7.2 | llama-server + patch 0002 | mailbox, 12 / 8 CPU threads | chat_bench | gen tok/s short / 2K / 8K; prompt 19 / 8K tokens; hit rate | 124.5 / 117 / 112.5 (both); 127–139 / 1,075; 79.9% | GPU busy 90% under nsys, one CUDA graph per token |
+| 2026-10-23 | T7.2 | logit_dump + patch 0002 | teacher-forced, same 1,004 positions | — | KL vs GPU-only / top-1 / nats per token | 0.00294 / 98.51% / 0.3506 | Same as T7.1 and the layer split |

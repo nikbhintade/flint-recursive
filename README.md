@@ -38,7 +38,8 @@ generating text than a tuned llama.cpp. That is an estimate until we measure it.
 - [x] Profile (T5): GPU idles 52% of decode waiting for CPU experts; RAM runs at 4800 instead of 6000 MT/s
 - [x] Engine route (T6): llama.cpp fork with a combined GPU + CPU MoE operation
 - [x] T7.1: CPU computes cache misses in parallel → 96–110 tok/s, +17–28% over llama.cpp's cache (patches/0001)
-- [ ] T7.2–T7.4: no per-layer host stop, adaptive cache contents, small batches
+- [x] T7.2: no per-layer host round trips → 112–125 tok/s, +36–45% over llama.cpp's cache (patches/0002)
+- [ ] T7.3–T7.4: adaptive cache contents, workload checks
 
 The plan, the reasoning behind it and every task: **[TODO.md](TODO.md)**. Progress so far: **[devlog/](devlog/README.md)**.
 

@@ -16,3 +16,4 @@ One file per significant piece of work: **what we did, what we expected, what we
 | 2026-10-23 | [Engine route: llama.cpp fork, not Strata (T6)](2026-10-23-04-engine-route.md) |
 | 2026-10-23 | [llama.cpp already has a GPU expert cache (T7 start)](2026-10-23-05-llama-moe-cache.md) |
 | 2026-10-23 | [The CPU computes the misses: +17-28% (T7.1)](2026-10-23-06-cpu-computes-misses.md) |
+| 2026-10-23 | [No host round trips: +36-45% (T7.2)](2026-10-23-07-no-host-sync.md) |
