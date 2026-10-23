@@ -2,3 +2,7 @@ flint-nvfp4-gguf/
 llama.cpp/
 *.gguf
 .pi-flint/
+ollama-0.40.9/
+bench/*.log
+bench/vram*
+bench/*.txt

@@ -102,13 +102,19 @@ NVFP4 speed (a slow llama.cpp CPU path lowers the baseline); (3) long context ta
   - RAM speed: `sudo dmidecode -t memory | grep -i speed`; enable XMP if below rated speed (*+10–25%* on the CPU half)
   - Plug the monitor into the motherboard (UHD 770) to free the VRAM the desktop uses
   - Confirm PCIe 5.0 x8 under load: `nvidia-smi --query-gpu=pcie.link.gen.current,pcie.link.width.current --format=csv`
-- [ ] **T2** Baseline: tuned llama.cpp
+- [x] **T2** Baseline: tuned llama.cpp → **~79–92 tok/s decode, ~1,100 tok/s prompts at 8K** (results log). Best
+  launch: `taskset -c 0-7,10-15 llama-server --n-cpu-moe 20 -c 32768 -fa on -ub 1024 -b 2048 -t 14`.
+  Findings: pin to P-core threads (+12% decode); any E-core in the mix halves decode; larger `-ub` nearly triples
+  prompt speed but costs expert layers on the GPU. CPUs 8–9 (one P-core) are offline on this PC.
   - Sweep `--n-cpu-moe` (highest GPU share that fits), P-cores only (`taskset` + `-t 8/16`) vs. all threads,
     `-fa on`, KV f16 vs. q8_0, `-ub` for prompt speed
   - `llama-bench -p 512,4096 -n 128` at 4K / 32K context; record decode and prompt tok/s
   - Recommended sampling for real use: `--temp 1 --top-p 0.95 --top-k 20 --min-p 0 --jinja`
   - **Output:** the number every later change is compared with
-- [ ] **T3** Ollama: does 0.40 load Flint at all? If yes, same benchmark, for the README comparison
+- [x] **T3** Ollama: Flint needs ≥ 0.40.9 on Linux (system install is 0.40.0, left untouched; 0.40.9 runs
+  side-by-side from `ollama-0.40.9/` on port 11435). `flint:latest` is byte-identical to the Hugging Face NVFP4
+  GGUF. Ollama uses llama.cpp's auto-fit (20 layers' experts on CPU) with 4 unpinned threads →
+  **~68–73 tok/s decode, ~620–650 tok/s prompts**
 
 ### Phase 2: measure what decides the design (~1–2 days)
 
@@ -247,4 +253,18 @@ One row per measurement. Never compare runs that changed more than one setting.
 | Date | Task | Engine + version | Placement / flags | Context | Metric | Result | Notes |
 |---|---|---|---|---|---|---|---|
 | 2026-10-22 | T0.1 | — | — | — | GGUF size | 22,863,084,160 B | Matches Hugging Face |
-| | | | | | | | |
+| 2026-10-23 | T0.3 | — | — | — | SHA-256 | `97cc8009ff9b…` | Same digest as Hugging Face and Ollama's `flint:latest` (Ollama verified it on pull) |
+| 2026-10-23 | T2 | llama.cpp `19ab5a5` | `-ncmoe 20`, 14 threads unpinned | 512+128 | pp512 / tg128 | 714 / 74.0 tok/s | Smoke test |
+| 2026-10-23 | T2 | llama.cpp `19ab5a5` | `-ncmoe 15`, `16` | 512+128 | — | OOM | 17 fits at 15.75 GB peak but leaves no room for context |
+| 2026-10-23 | T2 | llama.cpp `19ab5a5` | `-ncmoe 17` / `18`, 14 threads | 512+128 | tg128 | 78.5 / 79.6 tok/s | Unpinned |
+| 2026-10-23 | T2 | llama.cpp `19ab5a5` | `-ncmoe 18`, 7 P-cores, 1 thread each | 512+128 | tg128 | 91.3 tok/s | |
+| 2026-10-23 | T2 | llama.cpp `19ab5a5` | `-ncmoe 18`, 14 P-threads pinned | 512+128 | pp512 / tg128 | 778 / **92.0** tok/s | Best decode |
+| 2026-10-23 | T2 | llama.cpp `19ab5a5` | `-ncmoe 18`, 14 threads unpinned | 512+128 | tg128 | 82.3 tok/s | |
+| 2026-10-23 | T2 | llama.cpp `19ab5a5` | `-ncmoe 18`, 16 E-cores only | 512+128 | pp512 / tg128 | 487 / 76.5 tok/s | |
+| 2026-10-23 | T2 | llama.cpp `19ab5a5` | `-ncmoe 18`, 7 P + 16 E / all 30 threads | 512+128 | tg128 | 39.7 / 54.5 tok/s | E-cores stall lock-step work |
+| 2026-10-23 | T2 | llama.cpp `19ab5a5` | `-ncmoe 18`, P-pinned | depth 4K | pp4096 / tg128 | 767 / 86.2 tok/s | |
+| 2026-10-23 | T2 | llama.cpp `19ab5a5` | `-ncmoe 19`, P-pinned | depth 16K | pp4096 / tg128 | 715 / 79.7 tok/s | |
+| 2026-10-23 | T2 | llama.cpp `19ab5a5` | `-ncmoe 20`, P-pinned | depth 32K | pp4096 / tg128 | 659 / 71.8 tok/s | |
+| 2026-10-23 | T2 | llama.cpp `19ab5a5` | `-ncmoe 20/21/23`, `-ub 1024/2048/4096` | 4K prompt | pp4096 | 1,211 / 1,734 / **2,102** tok/s | `-ub 2048` at `-ncmoe 18`: OOM |
+| 2026-10-23 | T2 | llama-server `19ab5a5` | `-ncmoe 20 -c 32768 -ub 1024`, P-pinned | 19 / 2.2K / 8.2K prompts | prompt / gen tok/s | 190–212 / 85.8; 941–953 / 80.7; 1,108 / 78.5 | `bench/chat_bench.py`, 512 generated tokens; answer checked by hand, correct |
+| 2026-10-23 | T3 | Ollama 0.40.9 | auto-fit (20 layers' experts on CPU), 4 threads, `num_ctx` 32768 | 20 / 2.2K / 8.2K prompts | prompt / gen tok/s | 348–401 / 72–73; 616 / 69–70; 655 / 47–68 | Same script; prompt figures from first runs only (repeats hit Ollama's prompt cache) |
