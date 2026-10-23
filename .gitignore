@@ -12,3 +12,9 @@ tools/profile/build/
 tools/quality/build/
 bench/*.json
 __pycache__/
+.venv-t9/
+tools/t9/build/
+*.safetensors
+*.bf16
+*.bin
+*.pt
