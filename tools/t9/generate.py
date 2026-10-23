@@ -5,7 +5,9 @@ resumes from it (dir: data/t9 for the pilot, data/t9/full for the full run).
 Sampling is Flint's recommended one (temperature 1.0, top-p 0.95, top-k 20), so the head learns the text Flint
 really produces.
 
-Usage: python3 tools/t9/generate.py [--dir data/t9] [--workers 4] [--max-tokens 1536]
+--deadline (unix time): no new requests after it; answers already running finish and are kept.
+
+Usage: python3 tools/t9/generate.py [--dir data/t9] [--workers 4] [--max-tokens 1536] [--deadline <unix time>]
 """
 import argparse
 import concurrent.futures
@@ -13,6 +15,7 @@ import json
 import pathlib
 import threading
 import time
+import urllib.error
 import urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -26,16 +29,22 @@ def post(path, body):
         return json.load(r)
 
 
-def answer(p, i, max_tokens):
+def answer(p, i, max_tokens, deadline):
+    if time.time() > deadline:
+        return None
     body = {"messages": p["messages"]}
     if "tools" in p:
         body["tools"] = p["tools"]
-    prompt = post("/apply-template", body)["prompt"]
-    prompt_tokens = post("/tokenize", {"content": prompt, "add_special": True, "parse_special": True})["tokens"]
-    r = post("/completion", {
-        "prompt": prompt_tokens, "n_predict": max_tokens, "return_tokens": True, "cache_prompt": False,
-        "temperature": 1.0, "top_p": 0.95, "top_k": 20, "min_p": 0.0, "seed": 1000 + i,
-    })
+    try:
+        prompt = post("/apply-template", body)["prompt"]
+        prompt_tokens = post("/tokenize", {"content": prompt, "add_special": True, "parse_special": True})["tokens"]
+        r = post("/completion", {
+            "prompt": prompt_tokens, "n_predict": max_tokens, "return_tokens": True, "cache_prompt": False,
+            "temperature": 1.0, "top_p": 0.95, "top_k": 20, "min_p": 0.0, "seed": 1000 + i,
+        })
+    except urllib.error.HTTPError as e:  # e.g. a prompt longer than a slot: skip it, keep going
+        print(f"skipped {p['id']}: HTTP {e.code}", flush=True)
+        return None
     return {"id": p["id"], "kind": p["kind"], "prompt_tokens": prompt_tokens, "gen_tokens": r["tokens"],
             "stop": r.get("stop_type")}
 
@@ -45,6 +54,7 @@ def main():
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--max-tokens", type=int, default=1536)
     ap.add_argument("--dir", default=str(DATA))
+    ap.add_argument("--deadline", type=float, default=float("inf"))
     args = ap.parse_args()
     data = pathlib.Path(args.dir)
 
@@ -56,9 +66,11 @@ def main():
     t0, n_gen, n_done = time.time(), 0, 0
 
     with out_path.open("a") as out, concurrent.futures.ThreadPoolExecutor(args.workers) as pool:
-        futures = [pool.submit(answer, p, i, args.max_tokens) for i, p in todo]
+        futures = [pool.submit(answer, p, i, args.max_tokens, args.deadline) for i, p in todo]
         for f in concurrent.futures.as_completed(futures):
             row = f.result()
+            if row is None:
+                continue
             with lock:
                 out.write(json.dumps(row) + "\n")
                 out.flush()

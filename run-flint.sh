@@ -7,7 +7,8 @@
 #   CTX=65536      context size; the expert cache shrinks by ~29 MB per extra 1K tokens of context
 #   PORT=8080      port, on 127.0.0.1
 #   CACHE_MIB=...  GPU expert cache size; default from CTX
-#   SPEC=1         n-gram speculation (0 = off)
+#   SPEC=1         n-gram speculation (0 = off; eagle = EAGLE-3 draft head, see tools/t9; eagle+ngram = both)
+#   EAGLE=...      EAGLE-3 head GGUF (default data/t9/head.gguf); DRAFT_MAX=4 tokens drafted per step
 #   PARALLEL=1     parallel requests (slots); each slot gets CTX/PARALLEL tokens
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -17,7 +18,12 @@ PORT=${PORT:-8080}
 SPEC=${SPEC:-1}
 PARALLEL=${PARALLEL:-1}
 # 12000 MiB fits next to a 32K context on a 16 GB card (with ~0.5 GB used by the desktop); KV costs ~28 MiB per 1K tokens
-CACHE_MIB=${CACHE_MIB:-$(( 12000 - (CTX - 32768) * 28 / 1024 ))}
+EAGLE=${EAGLE:-data/t9/head.gguf}
+DRAFT_MAX=${DRAFT_MAX:-4}
+# the EAGLE-3 head (~260 MiB in bf16) with its KV cache and compute buffer takes VRAM from the expert cache
+HEAD_MIB=0
+case "$SPEC" in eagle*) HEAD_MIB=700 ;; esac
+CACHE_MIB=${CACHE_MIB:-$(( 12000 - (CTX - 32768) * 28 / 1024 - HEAD_MIB ))}
 
 MODEL=flint-nvfp4-gguf/flint-nvfp4.gguf
 SERVER=llama.cpp/build/bin/llama-server
@@ -29,9 +35,12 @@ CPUS=$(cat /sys/devices/cpu_core/cpus 2>/dev/null || cat /sys/devices/system/cpu
 THREADS=$(taskset -c "$CPUS" nproc)
 
 SPEC_FLAGS=()
-if [ "$SPEC" = 1 ]; then
-    SPEC_FLAGS=(--spec-type ngram-mod --spec-ngram-mod-n-max 8)
-fi
+case "$SPEC" in
+    1)            SPEC_FLAGS=(--spec-type ngram-mod --spec-ngram-mod-n-max 8) ;;
+    eagle)        SPEC_FLAGS=(--spec-type draft-eagle3 -md "$EAGLE" -ngld 99 --spec-draft-n-max "$DRAFT_MAX") ;;
+    eagle+ngram)  SPEC_FLAGS=(--spec-type draft-eagle3,ngram-mod --spec-ngram-mod-n-max 8 -md "$EAGLE" -ngld 99
+                              --spec-draft-n-max "$DRAFT_MAX") ;;
+esac
 
 echo "Flint on http://127.0.0.1:$PORT/v1 - context $CTX, expert cache $CACHE_MIB MiB, CPUs $CPUS ($THREADS threads)"
 export LLAMA_MOE_CACHE_PROFILE=$PWD/profiles/flint-coding.txt

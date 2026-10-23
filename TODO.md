@@ -222,11 +222,18 @@ NVFP4 speed (a slow llama.cpp CPU path lowers the baseline); (3) long context ta
     - [ ] **T9.1** Local, $0: SpecForge model definition for Flint (attention sinks + sliding window), tested on
       the 5060 Ti with a cut-down Flint (a few layers)
     - [ ] **T9.2** Pick ~30K–70K coding/agent prompts; choose the 32K draft vocabulary from token frequencies
-    - [ ] **T9.3** *Changed 2026-10-23:* the pilot runs **locally** instead (in progress): 2,300 prompts
+    - [x] **T9.3** Local pilot done (devlog 2026-10-23-14): pipeline verified end to end; head weak (42% first-token
+      accuracy, ~0.7 accepted per 3-token draft, slower than no head), so: more data
+    - [ ] **T9.3b** *2026-10-23:* **local full run instead of the cloud** (`tools/t9/full_run.sh`, unattended):
+      20,010 prompts, 8 parallel requests for 20 h (~16-18M answer tokens expected), features to the internal NVMe,
+      2 epochs; then acceptance and speed vs. no head and vs. n-gram. Known gap: long contexts (training sequences
+      <= 4K tokens)
+    - Pilot details: 2,300 prompts
       (`tools/t9/make_prompts.py`), Flint's own answers with our engine (`tools/t9/generate.py`, ~200 tok/s with 4
       parallel requests), features from our engine (`tools/t9/feature_dump.cpp`), our own trainer that mirrors
       llama.cpp's EAGLE-3 graph (`tools/t9/train.py`); then convert and measure acceptance
-    - [ ] **T9.4** *Decided 2026-10-23:* **cloud data generation in BF16 on one H200 with SGLang, budget < $5**,
+    - [ ] **T9.4** *On hold: the local full run (T9.3b) replaces it; kept as a fallback.* Was decided 2026-10-23:
+      **cloud data generation in BF16 on one H200 with SGLang, budget < $5**,
       only after the local pilot shows the pipeline works. Plan:
       - H200 SXM, Community, $3.59/hr (stock Low, CUDA 13.2 hosts; re-read price and stock before creating)
       - SGLang with the BF16 checkpoint `RecursiveSI/flint` (79.6 GB; SGLang's verified Flint recipe covers H200),

@@ -37,7 +37,7 @@ TARGET_LAYERS = [2, 24, 46]
 
 
 def load_target(device):
-    """Flint's token embeddings (bf16) and output layer (NVFP4 dequantized, times its per-tensor scale)."""
+    """Flint's token embeddings (bf16), output layer (NVFP4 dequantized, times its per-tensor scale), output norm."""
     from gguf import GGUFReader
     from gguf.quants import dequantize
     r = GGUFReader(str(ROOT / "flint-nvfp4-gguf" / "flint-nvfp4.gguf"))
@@ -48,7 +48,8 @@ def load_target(device):
     rows = []
     for i in range(0, out_w.data.shape[0], 8192):
         rows.append(torch.from_numpy(dequantize(np.array(out_w.data[i:i + 8192]), out_w.tensor_type) * scale).to(torch.bfloat16))
-    return emb.reshape(-1, H).to(device), torch.cat(rows).to(device)
+    out_norm = torch.from_numpy(np.array(t["output_norm.weight"].data, dtype=np.float32).copy())
+    return emb.reshape(-1, H).to(device), torch.cat(rows).to(device), out_norm.to(device)
 
 
 class RMSNorm(nn.Module):
@@ -150,6 +151,9 @@ def main():
     ap.add_argument("--lr", type=float, default=2e-4)
     ap.add_argument("--tokens-per-step", type=int, default=8192)
     ap.add_argument("--draft-vocab", type=int, default=32000)
+    ap.add_argument("--stop-at", type=int, help="stop after this many steps (schedule unchanged), for quick comparisons")
+    ap.add_argument("--init-from-target", action="store_true",
+                    help="start the output layer and final norm from Flint's (restricted to the draft vocabulary)")
     ap.add_argument("--dir", default=str(DATA))
     ap.add_argument("--features-dir")
     ap.add_argument("--out")
@@ -174,10 +178,14 @@ def main():
     covered = counts[draft_ids.numpy()].sum() / counts.sum()
     print(f"{len(seqs)} sequences, {n_tok} tokens; draft vocab {args.draft_vocab} covers {covered:.2%} of tokens", flush=True)
 
-    emb, w_out = load_target(dev)
+    emb, w_out, out_norm = load_target(dev)
     w_draft = w_out[draft_ids.to(dev)]            # target logits restricted to the draft vocabulary
     del w_out
     head = Head(args.draft_vocab).to(dev)
+    if args.init_from_target:
+        with torch.no_grad():
+            head.lm_head.weight.copy_(w_draft.float())
+            head.norm.weight.copy_(out_norm)
     print(f"head: {sum(p.numel() for p in head.parameters()) / 1e6:.1f}M parameters", flush=True)
 
     rng = random.Random(0)
@@ -220,7 +228,7 @@ def main():
 
     step, t0, acc_tok = 0, time.time(), 0
     epoch_order = []
-    while step < total_steps:
+    while step < min(total_steps, args.stop_at or total_steps):
         if not epoch_order:
             epoch_order = train[:]
             rng.shuffle(epoch_order)
@@ -241,7 +249,7 @@ def main():
                 print(f"step {step}/{total_steps} loss {loss.item():.3f} acc@step " +
                       " ".join(f"{a:.2f}" for _, a, _ in stats) +
                       f"  {(time.time() - t0) / 60:.1f} min", flush=True)
-            if step % 200 == 0 or step == total_steps:
+            if step % 200 == 0 or step == total_steps or step == args.stop_at:
                 head.eval()
                 tot = np.zeros((args.ttt, 2))
                 with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
