@@ -162,6 +162,24 @@ NVFP4 speed (a slow llama.cpp CPU path lowers the baseline); (3) long context ta
 ### Phase 4: engine work (weeks)
 
 - [ ] **T7** Per-expert VRAM cache with CPU computing misses in parallel (the core; adaptive policy from T4)
+  - **Found 2026-10-23: llama.cpp master already has a GPU expert cache**, `--moe-cache-mib N`
+    (`src/llama-moe-cache.cpp`, SLRU policy). Best setup: `--n-cpu-moe 49 --moe-cache-mib 12000 --load-mode none`
+    → **88.7% decode hits, 82.5–86 tok/s**, slightly ahead of the layer split (78.5–85.8). This is the new
+    baseline. `--load-mode none` matters (pinned host experts: 66–73 → 77–82 tok/s at 11000 MiB).
+    Mixed layer split + cache was worse (ncmoe 30 + 4000: 71% hits, 73–79 tok/s; ncmoe 40 + 8000: 83%, 78–82)
+  - How it works, per MoE layer and token: the host **synchronizes** to read the 6 expert ids, plans hits and
+    misses, **uploads each miss over PCIe** on the compute stream, then the GPU runs all 6 experts. Cost per token:
+    ~31.8 misses ≈ 56 MB ≈ 2.3 ms of uploads + 47 host round trips; ~11.9 ms per token vs. 6.98 ms all-on-GPU
+  - **Our version builds on it**; what changes is miss handling and synchronization:
+    - [ ] **T7.1** Misses computed on the CPU, in parallel with the GPU's hits, instead of uploaded; result added on
+      the GPU. Static cache contents first. Measure the overlap gain
+    - [ ] **T7.2** No per-layer host sync: the GPU splits hits/misses itself from a device slot map and posts
+      the miss list to mapped pinned memory; CPU workers poll it, compute, and signal back (Strata's "doorbell");
+      the whole token can then run as one CUDA graph
+    - [ ] **T7.3** Cache contents refreshed in the background (decayed LFU from T4: same hit rate as LRU, half
+      the copies) on a separate CUDA stream between tokens
+    - [ ] **T7.4** Keep llama.cpp's large-batch (prompt) path; check prompt speed is unchanged
+    - Target (*estimate*): ~7–7.5 ms per token ≈ **135–145 tok/s**, ~1.6–1.7× the new baseline
   - Optional: cache-aware routing (Strata `03f59246`), checked with teacher-forced nats/token
 - [ ] **T8** NVFP4 CPU kernel for AVX2 + AVX-VNNI: decode e2m1 to int8 with a 16-entry `pshufb` lookup, VNNI dot
   product with q8 activations, apply the FP8 block scale. Exact; about the cost of Q4_0. Useful for llama.cpp too
@@ -294,3 +312,7 @@ One row per measurement. Never compare runs that changed more than one setting.
 | 2026-10-23 | T5 | cpu_moe_bench (ggml `19ab5a5`) | 6 of 256 NVFP4 experts, 1 token | — | µs per MoE layer | 207 (14 P-threads), 218 (7 P-cores), 240 (8 P-threads), 326 (16 E-cores), 462 (all 30) | 51.3 GB/s best |
 | 2026-10-23 | T5 | membw (scratch) | 4 GB AVX2 read | — | RAM read GB/s | 70.5 (14 P-threads), 69.4 (7), 70.9 (30) | DDR5-6000 kit running at 4800 MT/s (XMP off) |
 | 2026-10-23 | T5 | nsys + llama-bench | `-ncmoe 20`, P-pinned | 64 tokens | GPU busy share | 48% | mul_mat_vec_q 159.5 ms of 197.3 ms busy; quantize_q8_1 24.5 ms; ~1,850 kernels/token |
+| 2026-10-23 | T7 | llama-server `19ab5a5` + MoE cache | `--n-cpu-moe 49 --moe-cache-mib 11000` (mmap) | chat_bench | gen tok/s short / 2K / 8K | 69–71 / 73 / 66 | Pageable host experts |
+| 2026-10-23 | T7 | llama-server `19ab5a5` + MoE cache | same + `--load-mode none` | chat_bench | gen tok/s short / 2K / 8K; decode hit rate | 78–82 / 79–81 / 80; 86.0% | 6,517 slots (54.2%); T4 simulator predicted ~86% (LRU) |
+| 2026-10-23 | T7 | llama-server `19ab5a5` + MoE cache | `--n-cpu-moe 49 --moe-cache-mib 12000 --load-mode none` | chat_bench | gen tok/s short / 8K; hit rate | **86.1 / 82.5–82.9**; 88.7% | New baseline; 14.9 GB VRAM |
+| 2026-10-23 | T7 | llama-server `19ab5a5` + MoE cache | `--n-cpu-moe 30 --moe-cache-mib 4000` / `40` + `8000`, no mmap | chat_bench | gen tok/s 8K; hit rate | 73–75 (71.3%) / 78.5–81.5 (83.3%) | Mixed setups lose |

@@ -33,7 +33,7 @@ generating text than a tuned llama.cpp. That is an estimate until we measure it.
 
 - [x] NVFP4 weights downloaded and size-checked
 - [x] llama.cpp built from master with CUDA (Flint support landed after the last release)
-- [x] Baseline: tuned llama.cpp ~79–92 tok/s, Ollama 0.40.9 ~68–73 tok/s (see TODO.md results log)
+- [x] Baseline: tuned llama.cpp ~79–92 tok/s, Ollama 0.40.9 ~68–73 tok/s; llama.cpp's own expert cache (`--moe-cache-mib`) ~83–86 tok/s
 - [x] Expert routing (T4): adaptive GPU expert cache ~89% hits vs. 62% for llama.cpp's layer split
 - [x] Profile (T5): GPU idles 52% of decode waiting for CPU experts; RAM runs at 4800 instead of 6000 MT/s
 - [x] Engine route (T6): llama.cpp fork with a combined GPU + CPU MoE operation
