@@ -222,8 +222,23 @@ NVFP4 speed (a slow llama.cpp CPU path lowers the baseline); (3) long context ta
     - [ ] **T9.1** Local, $0: SpecForge model definition for Flint (attention sinks + sliding window), tested on
       the 5060 Ti with a cut-down Flint (a few layers)
     - [ ] **T9.2** Pick ~30K–70K coding/agent prompts; choose the 32K draft vocabulary from token frequencies
-    - [ ] **T9.3** Cloud pilot, ~$2–3: ~5M generated tokens + short training run; check acceptance length
-    - [ ] **T9.4** Cloud full run, ~$11–13: 30M tokens + SpecForge online EAGLE-3 training
+    - [ ] **T9.3** *Changed 2026-10-23:* the pilot runs **locally** instead (in progress): 2,300 prompts
+      (`tools/t9/make_prompts.py`), Flint's own answers with our engine (`tools/t9/generate.py`, ~200 tok/s with 4
+      parallel requests), features from our engine (`tools/t9/feature_dump.cpp`), our own trainer that mirrors
+      llama.cpp's EAGLE-3 graph (`tools/t9/train.py`); then convert and measure acceptance
+    - [ ] **T9.4** *Decided 2026-10-23:* **cloud data generation in BF16 on one H200 with SGLang, budget < $5**,
+      only after the local pilot shows the pipeline works. Plan:
+      - H200 SXM, Community, $3.59/hr (stock Low, CUDA 13.2 hosts; re-read price and stock before creating)
+      - SGLang with the BF16 checkpoint `RecursiveSI/flint` (79.6 GB; SGLang's verified Flint recipe covers H200),
+        ~400 parallel requests (~60 GB of KV cache), est. ~8–12K tok/s
+      - ~35 min setup (install, 80 GB download, load) ≈ $2, then ~30 min of generation for ~15M answer tokens ≈ $1.80;
+        total ≈ $4. Hard stop at $4.50 or when generation ends; delete the pod right after
+      - Bring home only the token ids (~60 MB); features and training stay local on the NVFP4 model (the head
+        must predict what the model we run produces). Local disk limits features to ~15–18M tokens (~16 KB per token)
+      - Why BF16 although NVFP4 data matches our deployed model better and costs ~3x less per token: the user's
+        choice, for answers from the original model; the shift between BF16 answers and NVFP4 targets is small
+        (NVFP4 is within 0.7 points of BF16 per Recursive)
+      - Superseded plan: 30M tokens + SpecForge online training on an H200, ~$11–13
     - [ ] **T9.5** Local: load the head next to NVFP4 Flint; measure acceptance; if it drops vs. BF16, fine-tune
       on a few million locally extracted NVFP4 hidden states
 - [ ] **T10** Next-layer expert prediction (pre-gating) to update the cache ahead of time
@@ -310,6 +325,9 @@ step on the 5060 Ti, which would eat most of the gain. (Strata's MTP head used a
 **Conclusion:** generate and train in the cloud with SGLang + SpecForge; test the code locally first.
 
 ### Which cloud GPU
+
+**Decision 2026-10-23:** BF16 generation on an H200 with SGLang, under $5, then features and training locally (see
+T9.4). The table below is the original analysis for a full cloud run.
 
 BF16 (79.6 GB) is the only Flint checkpoint SGLang loads (the INT4 repo is MLX, the NVFP4 repo is GGUF). What
 limits batching is the memory **left over for KV cache** (~30 KB per token), not the GPU's speed.
