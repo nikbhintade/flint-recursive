@@ -224,7 +224,14 @@ NVFP4 speed (a slow llama.cpp CPU path lowers the baseline); (3) long context ta
     - [ ] **T9.2** Pick ~30K–70K coding/agent prompts; choose the 32K draft vocabulary from token frequencies
     - [x] **T9.3** Local pilot done (devlog 2026-10-23-14): pipeline verified end to end; head weak (42% first-token
       accuracy, ~0.7 accepted per 3-token draft, slower than no head), so: more data
-    - [ ] **T9.3b** *2026-10-23:* **local full run instead of the cloud** (`tools/t9/full_run.sh`, unattended):
+    - [x] **T9.3b** Local full run done (devlog 2026-10-25-01): 17.96M answer tokens, head at 62.8% first-token
+      accuracy (pilot 42%), 54% of drafts accepted with 2 per step; +10% on fresh code (133 vs 121 tok/s) but slower
+      on long contexts (8K: 72 vs 111) and behind n-gram overall, so n-gram stays the default
+    - [ ] **T9.6** Cut the per-step draft overhead (~15.5 ms per step with 2 drafts vs 8.3 ms per plain token):
+      profile the draft-model decodes (process + seed + drafts) and the 3-token verify; CUDA graphs for the draft
+      context. This decides whether any head pays off on this engine
+    - [ ] **T9.7** Long-context training data: 8-32K agent sessions (multi-turn tool use), then retrain
+    - Was: **local full run instead of the cloud** (`tools/t9/full_run.sh`, unattended):
       20,010 prompts, 8 parallel requests for 20 h (~16-18M answer tokens expected), features to the internal NVMe,
       2 epochs; then acceptance and speed vs. no head and vs. n-gram. Known gap: long contexts (training sequences
       <= 4K tokens)

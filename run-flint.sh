@@ -8,7 +8,7 @@
 #   PORT=8080      port, on 127.0.0.1
 #   CACHE_MIB=...  GPU expert cache size; default from CTX
 #   SPEC=1         n-gram speculation (0 = off; eagle = EAGLE-3 draft head, see tools/t9; eagle+ngram = both)
-#   EAGLE=...      EAGLE-3 head GGUF (default data/t9/head.gguf); DRAFT_MAX=4 tokens drafted per step
+#   EAGLE=...      EAGLE-3 head GGUF (default data/t9/full/head.gguf); DRAFT_MAX=2 tokens drafted per step
 #   PARALLEL=1     parallel requests (slots); each slot gets CTX/PARALLEL tokens
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -18,8 +18,8 @@ PORT=${PORT:-8080}
 SPEC=${SPEC:-1}
 PARALLEL=${PARALLEL:-1}
 # 12000 MiB fits next to a 32K context on a 16 GB card (with ~0.5 GB used by the desktop); KV costs ~28 MiB per 1K tokens
-EAGLE=${EAGLE:-data/t9/head.gguf}
-DRAFT_MAX=${DRAFT_MAX:-4}
+EAGLE=${EAGLE:-data/t9/full/head.gguf}
+DRAFT_MAX=${DRAFT_MAX:-2}
 # the EAGLE-3 head (~260 MiB in bf16) with its KV cache and compute buffer takes VRAM from the expert cache
 HEAD_MIB=0
 case "$SPEC" in eagle*) HEAD_MIB=700 ;; esac

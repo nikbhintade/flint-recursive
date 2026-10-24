@@ -59,7 +59,7 @@ fi
 # 4. training
 if [ ! -s "$D/head/config.json" ] || [ ! -e "$D/train.done" ]; then
     log "training: $TRAIN_ARGS"
-    $PY tools/t9/train.py --dir "$D" $TRAIN_ARGS > "$D/train.log" 2>&1 || { log "training failed"; exit 1; }
+    PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True $PY tools/t9/train.py --dir "$D" $TRAIN_ARGS > "$D/train.log" 2>&1 || { log "training failed"; exit 1; }
     touch "$D/train.done"
     log "training: done"
 fi

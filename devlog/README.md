@@ -24,3 +24,4 @@ One file per significant piece of work: **what we did, what we expected, what we
 | 2026-10-23 | [Ready for daily use: launcher, agent configs, soak test](2026-10-23-12-daily-use.md) |
 | 2026-10-23 | [The CPU computing cold prompt experts: slower, switched off (T8, T12.2)](2026-10-23-13-cpu-share-of-prompts.md) |
 | 2026-10-23 | [EAGLE-3 draft head, local pilot: the pipeline works, the head is too weak yet (T9)](2026-10-23-14-eagle3-pilot.md) |
+| 2026-10-25 | [EAGLE-3 head, full local run: better head, no net speedup yet (T9)](2026-10-25-01-eagle3-full-run.md) |

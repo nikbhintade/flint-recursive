@@ -25,6 +25,7 @@ import time
 import numpy as np
 import torch
 import torch.nn.functional as F
+import torch.utils.checkpoint
 from torch import nn
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -93,6 +94,14 @@ class Head(nn.Module):
 
     def step(self, emb, g, k, cache):
         """One unrolled step. emb, g [T, H]; cache holds (keys, values) of earlier steps. Returns (h, logits)."""
+        if k == 0:
+            cache.clear()
+        h, logits, key, val = self.step_pure(emb, g, k, cache)
+        cache.append((key, val))
+        return h, logits
+
+    def step_pure(self, emb, g, k, cache):
+        """step() without side effects (for checkpointing): also returns this step's keys and values."""
         T = emb.shape[0]
         x = torch.cat([self.input_layernorm(emb), self.hidden_norm(g)], -1)
         pos = torch.arange(T, device=emb.device) + k
@@ -101,9 +110,7 @@ class Head(nn.Module):
         val = self.v_proj(x).view(T, N_KV, D_HEAD)
         rep = N_HEAD // N_KV
         key, val = key.repeat_interleave(rep, 1), val.repeat_interleave(rep, 1)
-        if k == 0:
-            cache.clear()
-        cache.append((key, val))
+        cache = list(cache) + [(key, val)]
         qh = q.transpose(0, 1).float()                                        # [h, T, D]
         k0, v0 = cache[0][0].transpose(0, 1).float(), cache[0][1].transpose(0, 1).float()
         s0 = qh @ k0.transpose(1, 2) / math.sqrt(D_HEAD)                      # [h, T, T], causal over step 0
@@ -117,7 +124,7 @@ class Head(nn.Module):
         attn = self.o_proj(out.transpose(0, 1).reshape(T, N_HEAD * D_HEAD).to(x.dtype))
         h = attn + g
         h = h + self.down_proj(F.silu(self.gate_proj(self.post_attention_layernorm(h))) * self.up_proj(self.post_attention_layernorm(h)))
-        return h, self.lm_head(self.norm(h))
+        return h, self.lm_head(self.norm(h)), key, val
 
 
 def export(head, d2t, t2d, out_dir):
@@ -151,6 +158,11 @@ def main():
     ap.add_argument("--lr", type=float, default=2e-4)
     ap.add_argument("--tokens-per-step", type=int, default=8192)
     ap.add_argument("--draft-vocab", type=int, default=32000)
+    ap.add_argument("--max-len", type=int, default=3072,
+                    help="train on at most this many tokens per sequence (attention memory grows with its square)")
+    ap.add_argument("--checkpoint-len", type=int, default=1536,
+                    help="recompute each unrolled step in backward for sequences longer than this (saves memory)")
+    ap.add_argument("--test-memory", action="store_true")
     ap.add_argument("--stop-at", type=int, help="stop after this many steps (schedule unchanged), for quick comparisons")
     ap.add_argument("--init-from-target", action="store_true",
                     help="start the output layer and final norm from Flint's (restricted to the draft vocabulary)")
@@ -191,7 +203,7 @@ def main():
     rng = random.Random(0)
     order = list(range(len(seqs)))
     rng.shuffle(order)
-    n_val = max(8, len(order) // 20)
+    n_val = min(200, max(8, len(order) // 20))
     val, train = order[:n_val], order[n_val:]
     train_tokens = sum(seqs[i]["n_tokens"] for i in train)
     total_steps = int(args.epochs * train_tokens / args.tokens_per_step)
@@ -201,8 +213,8 @@ def main():
 
     def run(i, train_mode):
         s = seqs[i]
-        L, off, n_prompt = s["n_tokens"], s["offset"], s["n_prompt"]
-        x = torch.tensor(tokens[i], device=dev)
+        L, off, n_prompt = min(s["n_tokens"], args.max_len), s["offset"], s["n_prompt"]
+        x = torch.tensor(tokens[i][:L], device=dev)
         f = torch.from_numpy(np.array(feats[off: off + L])).to(dev).view(torch.bfloat16)   # [L, 4, H]
         with torch.no_grad():
             tgt = torch.softmax((f[:, 3] @ w_draft.T).float(), -1)                    # [L, V]: dist of token j+1
@@ -214,18 +226,36 @@ def main():
             if n <= 1:
                 break
             e = emb[x[1 + k: 1 + k + T]] if 1 + k + T <= L else torch.cat([emb[x[1 + k:]], emb[x[-1:]].expand(1 + k + T - L, H)])
-            g, logits = head.step(e, g, k, cache)
             t = tgt[1 + k: 1 + k + n]                    # target for chain i at step k: dist at position i+1+k
             pred_pos = torch.arange(n, device=dev) + 2 + k
             mask = (pred_pos >= n_prompt).float()          # predicted token is part of the answer
-            lp = torch.log_softmax(logits[:n].float(), -1)
-            ce = -(t * lp).sum(-1)
-            lk = (ce * mask).sum() / mask.sum().clamp(min=1)
+
+            def step_loss(e, g, t, mask, *flat, k=k, n=n):
+                h, logits, key, val = head.step_pure(e, g, k, list(zip(flat[0::2], flat[1::2])))
+                lp = torch.log_softmax(logits[:n].float(), -1)
+                lk = (-(t * lp).sum(-1) * mask).sum() / mask.sum().clamp(min=1)
+                acc = ((logits[:n].argmax(-1) == t.argmax(-1)).float() * mask).sum() / mask.sum().clamp(min=1)
+                return h, lk, acc, key, val
+
+            flat = [x for kv in cache for x in kv]
+            if train_mode and T > args.checkpoint_len:  # long sequence: keep only step inputs, recompute in backward
+                g, lk, acc, key, val = torch.utils.checkpoint.checkpoint(step_loss, e, g, t, mask, *flat, use_reentrant=False)
+            else:
+                g, lk, acc, key, val = step_loss(e, g, t, mask, *flat)
+            cache.append((key, val))
             loss = loss + weights[k] * lk
-            acc = ((logits[:n].argmax(-1) == t.argmax(-1)).float() * mask).sum() / mask.sum().clamp(min=1)
             stats.append((lk.item(), acc.item(), mask.sum().item()))
         return loss, stats
 
+    if args.test_memory:  # forward + backward on the longest sequences, report peak memory, exit
+        for i in sorted(range(len(seqs)), key=lambda j: -seqs[j]["n_tokens"])[:3]:
+            torch.cuda.reset_peak_memory_stats()
+            with torch.autocast("cuda", dtype=torch.bfloat16):
+                loss, _ = run(i, True)
+            loss.backward()
+            opt.zero_grad(set_to_none=True)
+            print(f"len {min(seqs[i]['n_tokens'], args.max_len)}: peak {torch.cuda.max_memory_allocated() / 2**30:.1f} GiB", flush=True)
+        return
     step, t0, acc_tok = 0, time.time(), 0
     epoch_order = []
     while step < min(total_steps, args.stop_at or total_steps):
