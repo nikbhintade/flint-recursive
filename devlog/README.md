@@ -26,3 +26,4 @@ One file per significant piece of work: **what we did, what we expected, what we
 | 2026-10-23 | [EAGLE-3 draft head, local pilot: the pipeline works, the head is too weak yet (T9)](2026-10-23-14-eagle3-pilot.md) |
 | 2026-10-25 | [EAGLE-3 head, full local run: better head, no net speedup yet (T9)](2026-10-25-01-eagle3-full-run.md) |
 | 2026-10-25 | [Where a speculative step's time goes: the verify, not the draft head (T9.6)](2026-10-25-02-spec-step-profile.md) |
+| 2026-10-25 | [EAGLE-3 acceptance gate: long files fixed, still only a tie with n-gram (T9.8)](2026-10-25-03-eagle3-acceptance-gate.md) |

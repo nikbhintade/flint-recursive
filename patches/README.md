@@ -13,6 +13,7 @@ the full diff against the base commit at that milestone** (apply one, not severa
 | `0005-chunked-small-batches.patch` | `19ab5a5` | Batches of 9-32 tokens read the cache in 8-token chunks (CUDA vector kernels): 5x faster, makes n-gram speculation pay |
 | `0006-cpu-kernel-prompt-share.patch` | `19ab5a5` | Multi-token NVFP4 CPU kernel (AVX2/AVX-VNNI), grouped CPU pool, 1,024-token mailbox; optional CPU share of prompt experts (off: it was slower) |
 | `0007-spec-profiling.patch` | `19ab5a5` | T9.6: `LLAMA_SPEC_PROF=1` logs per-step speculation timings (target decode by batch size, EAGLE-3 draft-model phases); off by default |
+| `0008-eagle3-acceptance-gate.patch` | `19ab5a5` | T9.8: EAGLE-3 stops drafting while its acceptance is below 35% (probes with backoff); 0007's draft-phase timers moved into the EAGLE-3 drafter, where they belong |
 | `fix-moe-cache-prec-policy.patch` | `19ab5a5` | Standalone bug fix for upstream llama.cpp's own `--moe-cache-mib` (see below) |
 
 ## Apply and build
@@ -20,7 +21,7 @@ the full diff against the base commit at that milestone** (apply one, not severa
 ```bash
 git clone https://github.com/ggml-org/llama.cpp && cd llama.cpp
 git checkout 19ab5a5   # or the commit in the table
-git apply ../patches/0007-spec-profiling.patch   # the newest patch
+git apply ../patches/0008-eagle3-acceptance-gate.patch   # the newest patch
 cmake -B build -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=120 -DCMAKE_BUILD_TYPE=Release
 cmake --build build --target llama-server -j
 ```
@@ -41,6 +42,9 @@ step). +34-69% on answers that copy code, no change on others. Keep drafts at 8 
 `-ot ... \.weight=CPU` keeps only the expert weights in RAM; `--n-cpu-moe` also moves the small expert scale
 tensors, which then get copied to the GPU every layer (4-8% slower).
 
+- `LLAMA_SPEC_GATE`: EAGLE-3 acceptance gate, the running acceptance rate below which it stops drafting (default
+  0.35, the break-even with 2 drafts; 0 = off). `LLAMA_SPEC_GATE_PROBE`: steps before a probe draft (default 16;
+  doubles after each failed probe, up to 16x).
 - `LLAMA_SPEC_PROF`: set to log speculation timings every 500 steps (`srv prof:` and `spec prof:` lines).
 - `LLAMA_MOE_CACHE_PROFILE`: enables the static cache; a text file of `layer expert count` lines, most used first.
 - `LLAMA_MOE_CACHE_THREADS`: CPU worker threads (default 12).

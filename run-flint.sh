@@ -9,7 +9,8 @@
 #   CACHE_MIB=...  GPU expert cache size; default from CTX
 #   SPEC=1         n-gram speculation (0 = off; eagle = EAGLE-3 draft head, see tools/t9; eagle+ngram = both)
 #   EAGLE=...      EAGLE-3 head GGUF (default data/t9/full/head-q4_0.gguf, made with llama-quantize head.gguf ... Q4_0);
-#                  DRAFT_MAX=2 tokens drafted per step
+#                  DRAFT_MAX=2 tokens drafted per step; EAGLE pauses itself while its acceptance is low
+#                  (LLAMA_SPEC_GATE, see patches/README.md)
 #   PARALLEL=1     parallel requests (slots); each slot gets CTX/PARALLEL tokens
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -21,10 +22,8 @@ PARALLEL=${PARALLEL:-1}
 # 12000 MiB fits next to a 32K context on a 16 GB card (with ~0.5 GB used by the desktop); KV costs ~28 MiB per 1K tokens
 EAGLE=${EAGLE:-data/t9/full/head-q4_0.gguf}
 DRAFT_MAX=${DRAFT_MAX:-2}
-# the EAGLE-3 head (~90 MiB in q4_0, ~260 MiB in bf16) with its KV cache and compute buffer takes VRAM from the expert cache
-HEAD_MIB=0
-case "$SPEC" in eagle*) HEAD_MIB=700 ;; esac
-CACHE_MIB=${CACHE_MIB:-$(( 12000 - (CTX - 32768) * 28 / 1024 - HEAD_MIB ))}
+# the EAGLE-3 head (q4_0) with 128-token draft batches needs ~350 MiB, which fits in the headroom left next to the cache
+CACHE_MIB=${CACHE_MIB:-$(( 12000 - (CTX - 32768) * 28 / 1024 ))}
 
 MODEL=flint-nvfp4-gguf/flint-nvfp4.gguf
 SERVER=llama.cpp/build/bin/llama-server
@@ -38,9 +37,10 @@ THREADS=$(taskset -c "$CPUS" nproc)
 SPEC_FLAGS=()
 case "$SPEC" in
     1)            SPEC_FLAGS=(--spec-type ngram-mod --spec-ngram-mod-n-max 8) ;;
-    eagle)        SPEC_FLAGS=(--spec-type draft-eagle3 -md "$EAGLE" -ngld 99 --spec-draft-n-max "$DRAFT_MAX") ;;
+    eagle)        SPEC_FLAGS=(--spec-type draft-eagle3 -md "$EAGLE" -ngld 99 --spec-draft-n-max "$DRAFT_MAX"
+                              --spec-draft-n-ubatch 128) ;;
     eagle+ngram)  SPEC_FLAGS=(--spec-type draft-eagle3,ngram-mod --spec-ngram-mod-n-max 8 -md "$EAGLE" -ngld 99
-                              --spec-draft-n-max "$DRAFT_MAX") ;;
+                              --spec-draft-n-max "$DRAFT_MAX" --spec-draft-n-ubatch 128) ;;
 esac
 
 echo "Flint on http://127.0.0.1:$PORT/v1 - context $CTX, expert cache $CACHE_MIB MiB, CPUs $CPUS ($THREADS threads)"

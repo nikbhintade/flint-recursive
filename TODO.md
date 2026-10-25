@@ -232,8 +232,11 @@ NVFP4 speed (a slow llama.cpp CPU path lowers the baseline); (3) long context ta
       different experts per token and the CPU misses grow with it), draft model 2.4 ms (bf16). Head in q4_0: draft
       model 1.25 ms, acceptance unchanged, EAGLE +4-8% on every workload; now the launcher's default head.
       Remaining loss is long contexts (acceptance 20% at 2K, 5% at 8K), not overhead
-    - [ ] **T9.8** Per-slot acceptance gate: stop EAGLE drafting while its recent acceptance is below break-even
-      (~35% with 2 drafts), re-probe now and then; would make `eagle+ngram` no worse than n-gram on long contexts
+    - [x] **T9.8** Per-slot acceptance gate (patches/0008, `LLAMA_SPEC_GATE`): EAGLE stops drafting below 35%
+      running acceptance, probes after 16 steps with backoff; draft batches of 128 tokens free the 700 MiB the
+      launcher held back for the head. Long files no longer lose much (8K: 76 -> 107 tok/s, none 111), but
+      `eagle+ngram` only ties n-gram overall (+6% new code, -4% long files, edits within noise, agent turns equal):
+      n-gram stays the default. Next lever is acceptance on long contexts (T9.7: 5% at 8K)
     - [ ] **T9.7** Long-context training data: 8-32K agent sessions (multi-turn tool use), then retrain
     - Was: **local full run instead of the cloud** (`tools/t9/full_run.sh`, unattended):
       20,010 prompts, 8 parallel requests for 20 h (~16-18M answer tokens expected), features to the internal NVMe,
