@@ -25,3 +25,4 @@ One file per significant piece of work: **what we did, what we expected, what we
 | 2026-10-23 | [The CPU computing cold prompt experts: slower, switched off (T8, T12.2)](2026-10-23-13-cpu-share-of-prompts.md) |
 | 2026-10-23 | [EAGLE-3 draft head, local pilot: the pipeline works, the head is too weak yet (T9)](2026-10-23-14-eagle3-pilot.md) |
 | 2026-10-25 | [EAGLE-3 head, full local run: better head, no net speedup yet (T9)](2026-10-25-01-eagle3-full-run.md) |
+| 2026-10-25 | [Where a speculative step's time goes: the verify, not the draft head (T9.6)](2026-10-25-02-spec-step-profile.md) |

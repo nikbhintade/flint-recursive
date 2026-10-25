@@ -8,7 +8,7 @@ set -uo pipefail
 cd "$(dirname "$0")/../.."
 OUT=data/t9/full/compare
 mkdir -p "$OUT"
-export EAGLE=${EAGLE:-data/t9/full/head.gguf}
+export EAGLE=${EAGLE:-data/t9/full/head-q4_0.gguf}
 
 stop_server() {
     if pgrep -x llama-server >/dev/null; then kill $(pgrep -x llama-server); fi
